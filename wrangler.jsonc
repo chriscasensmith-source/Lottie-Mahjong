@@ -1,0 +1,10 @@
+{
+  // Cloudflare config for deploying the static export as a Worker with assets.
+  // `npm run build` produces ./out; `npx wrangler deploy` uploads it.
+  "name": "lottie-mahjong",
+  "compatibility_date": "2024-11-01",
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "single-page-application"
+  }
+}
