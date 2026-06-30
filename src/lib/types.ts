@@ -36,6 +36,7 @@ export interface Section {
 
 // A single logged win, as stored in Supabase (or localStorage fallback).
 export interface WinRecord {
+  id?: string; // uuid from Supabase, or a temporary client id when offline
   hand_id: string;
   won_at: string; // ISO timestamp
 }
