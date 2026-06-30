@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { WinRecord } from "@/lib/types";
 
@@ -57,6 +57,13 @@ export function useWins(): UseWins {
   const [records, setRecords] = useState<WinRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const backend = isSupabaseConfigured ? "supabase" : "local";
+
+  // Mirror of the latest records so callbacks can read current state without
+  // going stale or depending on it.
+  const recordsRef = useRef<WinRecord[]>([]);
+  useEffect(() => {
+    recordsRef.current = records;
+  }, [records]);
 
   // Initial load.
   useEffect(() => {
@@ -129,18 +136,18 @@ export function useWins(): UseWins {
   }, []);
 
   const undoWin = useCallback(async (handId: string) => {
-    // Find the most recent record for this hand.
-    let target: WinRecord | undefined;
+    // Find the most recent record for this hand from current state.
+    const forHand = recordsRef.current.filter((r) => r.hand_id === handId);
+    if (forHand.length === 0) return;
+    const target = forHand.reduce((a, b) => (a.won_at >= b.won_at ? a : b));
+
     setRecords((prev) => {
-      const forHand = prev.filter((r) => r.hand_id === handId);
-      if (forHand.length === 0) return prev;
-      target = forHand.reduce((a, b) => (a.won_at >= b.won_at ? a : b));
       const next = prev.filter((r) => r !== target);
       if (!isSupabaseConfigured) writeLocal(next);
       return next;
     });
 
-    if (supabase && target?.id && !target.id.startsWith("tmp-")) {
+    if (supabase && target.id && !target.id.startsWith("tmp-")) {
       const { error } = await supabase
         .from("mahjong_wins")
         .delete()

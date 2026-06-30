@@ -197,6 +197,11 @@ export default function Home() {
           </div>
         </>
       )}
+
+      <footer className="mt-16 text-center text-xs text-emerald-100/30">
+        2026 National Mah Jongg League card · {ALL_HANDS.length} hands ·
+        made for Lottie 🀄
+      </footer>
     </main>
   );
 }
