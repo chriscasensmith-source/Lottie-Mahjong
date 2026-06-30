@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Hand, TileColor } from "@/lib/types";
 
@@ -10,15 +11,65 @@ const COLOR_CLASS: Record<TileColor, string> = {
   neutral: "text-tile-neutral",
 };
 
+const BURST_COLORS = ["#137a4b", "#c0392b", "#1f5fa8", "#f59e0b"];
+
+// A short celebratory burst of colored tiles when a win is logged.
+function Burst() {
+  const pieces = Array.from({ length: 14 });
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+      {pieces.map((_, i) => {
+        const angle = (i / pieces.length) * Math.PI * 2;
+        const dist = 60 + Math.random() * 70;
+        return (
+          <motion.span
+            key={i}
+            initial={{ x: 0, y: 0, opacity: 1, scale: 1, rotate: 0 }}
+            animate={{
+              x: Math.cos(angle) * dist,
+              y: Math.sin(angle) * dist - 20,
+              opacity: 0,
+              scale: 0.4,
+              rotate: Math.random() * 360,
+            }}
+            transition={{ duration: 0.8, ease: "easeOut" }}
+            className="absolute h-2.5 w-2.5 rounded-[3px]"
+            style={{ backgroundColor: BURST_COLORS[i % BURST_COLORS.length] }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 interface HandCardProps {
   hand: Hand;
   winCount: number;
+  note: string;
   onLogWin: (handId: string) => void;
   onUndo: (handId: string) => void;
+  onNoteChange: (handId: string, text: string) => void;
 }
 
-export function HandCard({ hand, winCount, onLogWin, onUndo }: HandCardProps) {
+export function HandCard({
+  hand,
+  winCount,
+  note,
+  onLogWin,
+  onUndo,
+  onNoteChange,
+}: HandCardProps) {
   const played = winCount > 0;
+  const [burstKey, setBurstKey] = useState(0);
+  const [showBurst, setShowBurst] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+
+  function handleWin() {
+    setBurstKey((k) => k + 1);
+    setShowBurst(true);
+    window.setTimeout(() => setShowBurst(false), 850);
+    onLogWin(hand.id);
+  }
 
   return (
     <motion.article
@@ -32,6 +83,8 @@ export function HandCard({ hand, winCount, onLogWin, onUndo }: HandCardProps) {
         played ? "ring-emerald-400" : "ring-transparent"
       }`}
     >
+      <AnimatePresence>{showBurst && <Burst key={burstKey} />}</AnimatePresence>
+
       {/* Played badge */}
       <AnimatePresence>
         {played && (
@@ -79,16 +132,45 @@ export function HandCard({ hand, winCount, onLogWin, onUndo }: HandCardProps) {
       </div>
 
       {/* Instruction */}
-      <p className="px-4 pb-3 text-sm leading-snug text-stone-600">
+      <p className="px-4 pb-2 text-sm leading-snug text-stone-600">
         {hand.description}
       </p>
+
+      {/* Notes (collapsible, on-device) */}
+      <AnimatePresence initial={false}>
+        {notesOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden px-4"
+          >
+            <textarea
+              value={note}
+              onChange={(e) => onNoteChange(hand.id, e.target.value)}
+              placeholder="Your notes for this hand…"
+              rows={2}
+              className="mb-2 w-full resize-none rounded-lg border border-stone-300 bg-white p-2 text-sm text-stone-800 outline-none focus:border-emerald-400"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Footer: win count + actions */}
       <div className="flex items-center justify-between gap-2 border-t border-stone-200 bg-stone-100/70 px-4 py-2.5">
         <div className="flex items-center gap-2 text-sm text-stone-600">
-          <span className="font-semibold text-stone-900 tabular-nums">
-            {winCount}
-          </span>
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.span
+              key={winCount}
+              initial={{ y: -8, opacity: 0, scale: 0.6 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 8, opacity: 0, position: "absolute" }}
+              transition={{ type: "spring", stiffness: 500, damping: 24 }}
+              className="font-semibold text-stone-900 tabular-nums"
+            >
+              {winCount}
+            </motion.span>
+          </AnimatePresence>
           win{winCount === 1 ? "" : "s"}
           {played && (
             <button
@@ -99,13 +181,26 @@ export function HandCard({ hand, winCount, onLogWin, onUndo }: HandCardProps) {
             </button>
           )}
         </div>
-        <motion.button
-          whileTap={{ scale: 0.92 }}
-          onClick={() => onLogWin(hand.id)}
-          className="rounded-full bg-emerald-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
-        >
-          + Log win
-        </motion.button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setNotesOpen((o) => !o)}
+            title="Notes"
+            className={`rounded-full px-2 py-1.5 text-sm transition-colors ${
+              note
+                ? "bg-amber-100 text-amber-700"
+                : "text-stone-400 hover:bg-stone-200 hover:text-stone-700"
+            }`}
+          >
+            📝
+          </button>
+          <motion.button
+            whileTap={{ scale: 0.92 }}
+            onClick={handleWin}
+            className="rounded-full bg-emerald-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
+          >
+            + Log win
+          </motion.button>
+        </div>
       </div>
     </motion.article>
   );
