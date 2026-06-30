@@ -1,56 +1,86 @@
 import type { Section } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
-// PLACEHOLDER DATA
+// 2026 National Mah Jongg League (NMJL) card — transcribed from photos.
 // ---------------------------------------------------------------------------
-// These are sample hands so the UI renders during scaffolding. They are NOT a
-// real NMJL card. Replace them with the actual hands, colors, points, and
-// instructions from your three photos (see README "Adding your real hands").
+// NOTE: White Dragon is used as zero "0". It may be used with any suit.
 //
-// Colors map to the ink colors on the physical card:
+// Colors map to the printed ink on the card:
 //   green  -> tile.green
 //   red    -> tile.red
 //   blue   -> tile.blue
-//   neutral-> tile.neutral (used for flowers/winds/dragons text, etc.)
+//   neutral-> tile.neutral (black)
+// concealed: true = "C" (concealed), false = "X" (exposed)
+//
+// STATUS: Sections 2026 + 2468 entered for verification. The remaining six
+// sections (Quints, Consecutive Run, 13579, Winds-Dragons, 369, Singles &
+// Pairs) are being added section-by-section after a colors/points check.
 // ---------------------------------------------------------------------------
 
 export const SECTIONS: Section[] = [
   {
-    id: "2025",
-    name: "2025",
-    note: "Any like pairs of the year",
+    id: "2026",
+    name: "2026",
     accentClass: "text-tile-green",
     hands: [
       {
-        id: "2025-1",
-        sectionId: "2025",
+        id: "2026-1",
+        sectionId: "2026",
         pattern: [
-          { text: "FF", color: "green" },
-          { text: "2025", color: "green" },
-          { text: "2025", color: "red" },
+          { text: "222", color: "green" },
+          { text: "000", color: "red" },
+          { text: "2222", color: "red" },
+          { text: "6666", color: "red" },
         ],
         points: 25,
         concealed: false,
-        description: "Flowers + year in two suits.",
+        description: "Any 2 Suits.",
       },
       {
-        id: "2025-2",
-        sectionId: "2025",
+        id: "2026-2",
+        sectionId: "2026",
         pattern: [
-          { text: "FFFF", color: "green" },
-          { text: "2025", color: "blue" },
-          { text: "DDDD", color: "blue" },
+          { text: "2026", color: "green" },
+          { text: "DDD", color: "red" },
+          { text: "2222", color: "red" },
+          { text: "DDD", color: "red" },
+        ],
+        points: 25,
+        concealed: false,
+        description: "Any 2 Suits w Matching Dragons. Kong 2 or 6.",
+      },
+      {
+        id: "2026-3",
+        sectionId: "2026",
+        pattern: [
+          { text: "FFF", color: "green" },
+          { text: "2026", color: "red" },
+          { text: "2222", color: "green" },
+          { text: "6666", color: "red" },
+        ],
+        points: 25,
+        concealed: false,
+        description: "Any 3 Suits.",
+      },
+      {
+        id: "2026-4",
+        sectionId: "2026",
+        pattern: [
+          { text: "22", color: "green" },
+          { text: "00", color: "red" },
+          { text: "222", color: "green" },
+          { text: "666", color: "red" },
+          { text: "NEWS", color: "blue" },
         ],
         points: 30,
         concealed: false,
-        description: "Quint flowers, year, dragons (1 suit).",
+        description: "Any 2 Suits.",
       },
     ],
   },
   {
     id: "2468",
     name: "2468",
-    note: "Even numbers only",
     accentClass: "text-tile-red",
     hands: [
       {
@@ -58,47 +88,94 @@ export const SECTIONS: Section[] = [
         sectionId: "2468",
         pattern: [
           { text: "222", color: "green" },
-          { text: "44", color: "green" },
-          { text: "666", color: "green" },
-          { text: "88", color: "green" },
+          { text: "444", color: "green" },
+          { text: "6666", color: "red" },
+          { text: "8888", color: "red" },
         ],
         points: 25,
         concealed: false,
-        description: "Pungs and pairs of evens, 1 suit.",
+        description: "Any 1 or 2 Suits.",
       },
       {
         id: "2468-2",
         sectionId: "2468",
         pattern: [
-          { text: "FF", color: "neutral" },
-          { text: "2468", color: "red" },
-          { text: "2468", color: "blue" },
+          { text: "222", color: "green" },
+          { text: "444", color: "green" },
+          { text: "6666", color: "green" },
+          { text: "8888", color: "green" },
+        ],
+        points: 25,
+        concealed: false,
+        description: "Any 1 Suit. (Also valid as 222 444 6666 88.)",
+      },
+      {
+        id: "2468-3",
+        sectionId: "2468",
+        pattern: [
+          { text: "EE", color: "green" },
+          { text: "22", color: "red" },
+          { text: "444", color: "red" },
+          { text: "666", color: "red" },
+          { text: "88", color: "red" },
+          { text: "WW", color: "green" },
         ],
         points: 30,
-        concealed: true,
-        description: "Concealed: flowers + evens run in two suits.",
+        concealed: false,
+        description: "Any 2 Suits. East and West Only.",
       },
-    ],
-  },
-  {
-    id: "singles-pairs",
-    name: "Singles & Pairs",
-    note: "Concealed only",
-    accentClass: "text-tile-blue",
-    hands: [
       {
-        id: "sp-1",
-        sectionId: "singles-pairs",
+        id: "2468-4",
+        sectionId: "2468",
         pattern: [
-          { text: "11", color: "green" },
-          { text: "22", color: "red" },
-          { text: "33", color: "blue" },
-          { text: "44", color: "green" },
-          { text: "55", color: "red" },
+          { text: "2222", color: "green" },
+          { text: "DDDD", color: "red" },
+          { text: "8888", color: "green" },
+          { text: "DDDD", color: "red" },
         ],
-        points: 50,
-        concealed: true,
-        description: "Pairs of consecutive numbers across suits.",
+        points: 30,
+        concealed: false,
+        description: "Any 2 Suits w Matching Dragons. These Nos. Only.",
+      },
+      {
+        id: "2468-5",
+        sectionId: "2468",
+        pattern: [
+          { text: "2468", color: "green" },
+          { text: "2222", color: "red" },
+          { text: "D", color: "red" },
+          { text: "2222", color: "green" },
+          { text: "D", color: "green" },
+        ],
+        points: 25,
+        concealed: false,
+        description: "Any 3 Suits. Like Kongs 2, 4, 6 or 8 w Matching Dragon.",
+      },
+      {
+        id: "2468-6",
+        sectionId: "2468",
+        pattern: [
+          { text: "2468", color: "green" },
+          { text: "FFF", color: "red" },
+          { text: "2222", color: "red" },
+        ],
+        points: 30,
+        concealed: false,
+        description: "Any 2 Suits. Kong 2, 4, 6 or 8.",
+      },
+      {
+        id: "2468-7",
+        sectionId: "2468",
+        pattern: [
+          { text: "FF", color: "green" },
+          { text: "246", color: "red" },
+          { text: "888", color: "red" },
+          { text: "246", color: "green" },
+          { text: "888", color: "green" },
+        ],
+        points: 30,
+        concealed: false,
+        description: "Any 2 Suits.",
       },
     ],
   },
