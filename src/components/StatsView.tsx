@@ -65,7 +65,6 @@ export function StatsView({ records, removeGame }: StatsViewProps) {
   const playedHands = new Set(
     records.filter((r) => r.outcome === "win" && r.hand_id).map((r) => r.hand_id),
   ).size;
-  const maxSectionWins = Math.max(1, ...sections.map((s) => s.wins));
   const maxDay = Math.max(1, ...days.map((d) => d.count));
 
   if (o.total === 0) {
@@ -145,27 +144,36 @@ export function StatsView({ records, removeGame }: StatsViewProps) {
       </Card>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        {/* Wins by section */}
-        <Card title="Wins by section">
+        {/* Section completion: distinct hands won vs total in the section */}
+        <Card title="Section progress">
           <div className="space-y-2.5">
-            {sections.map((s) => (
-              <div key={s.id} className="flex items-center gap-3">
-                <div className="w-28 shrink-0 truncate text-sm text-emerald-50">
-                  {s.name}
+            {sections.map((s) => {
+              const pct = s.total ? (s.playedHands / s.total) * 100 : 0;
+              const done = s.total > 0 && s.playedHands >= s.total;
+              return (
+                <div key={s.id} className="flex items-center gap-3">
+                  <div className="w-28 shrink-0 truncate text-sm text-emerald-50">
+                    {s.name}
+                  </div>
+                  <div className="relative h-5 flex-1 overflow-hidden rounded-full bg-white/10">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${pct}%` }}
+                      transition={{ type: "spring", stiffness: 120, damping: 20 }}
+                      className={`h-full rounded-full bg-gradient-to-r ${
+                        done
+                          ? "from-amber-400 to-amber-300"
+                          : "from-emerald-500 to-emerald-300"
+                      }`}
+                    />
+                  </div>
+                  <div className="w-12 text-right text-sm font-semibold tabular-nums text-emerald-100">
+                    {s.playedHands}/{s.total}
+                    {done && " ✓"}
+                  </div>
                 </div>
-                <div className="relative h-5 flex-1 overflow-hidden rounded-full bg-white/10">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${(s.wins / maxSectionWins) * 100}%` }}
-                    transition={{ type: "spring", stiffness: 120, damping: 20 }}
-                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-300"
-                  />
-                </div>
-                <div className="w-6 text-right text-sm font-semibold tabular-nums text-emerald-100">
-                  {s.wins}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
 
