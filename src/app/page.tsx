@@ -26,14 +26,33 @@ function handMatches(hand: Hand, sectionName: string, q: string): boolean {
 }
 
 export default function Home() {
-  const { records, counts, loading, totalWins, playedCount, logWin, undoWin, backend } =
-    useWins();
+  const {
+    records,
+    counts,
+    loading,
+    totalWins,
+    playedCount,
+    logWin,
+    logLoss,
+    logWall,
+    undoWin,
+    removeGame,
+    backend,
+  } = useWins();
   const { notes, setNote } = useNotes();
   const [view, setView] = useState<View>("hands");
   const [filter, setFilter] = useState<HandFilter>("all");
   const [query, setQuery] = useState("");
+  const [toast, setToast] = useState<string | null>(null);
 
   const q = query.trim().toLowerCase();
+
+  function recordResult(kind: "loss" | "wall") {
+    if (kind === "loss") logLoss();
+    else logWall();
+    setToast(kind === "loss" ? "Loss recorded" : "Wall game recorded");
+    window.setTimeout(() => setToast(null), 1800);
+  }
 
   const sections = useMemo(() => {
     return SECTIONS.map((section) => {
@@ -55,6 +74,20 @@ export default function Home() {
 
   return (
     <main className="felt-texture mx-auto min-h-dvh max-w-6xl px-4 pb-20 pt-8 sm:px-6">
+      {/* Transient confirmation toast */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-stone-900/90 px-4 py-2 text-sm font-medium text-white shadow-lg ring-1 ring-white/10 backdrop-blur"
+          >
+            {toast}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <header className="flex flex-col items-center gap-5 text-center">
         <motion.div
@@ -104,6 +137,23 @@ export default function Home() {
           totalWins={totalWins}
         />
 
+        {/* Record a non-win game result */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-emerald-100/50">Didn&apos;t win?</span>
+          <button
+            onClick={() => recordResult("loss")}
+            className="rounded-full bg-rose-500/15 px-3 py-1.5 text-sm font-semibold text-rose-200 ring-1 ring-rose-400/30 transition-colors hover:bg-rose-500/25"
+          >
+            ❌ Log loss
+          </button>
+          <button
+            onClick={() => recordResult("wall")}
+            className="rounded-full bg-amber-500/15 px-3 py-1.5 text-sm font-semibold text-amber-200 ring-1 ring-amber-400/30 transition-colors hover:bg-amber-500/25"
+          >
+            🧱 Wall game
+          </button>
+        </div>
+
         <p className="text-xs text-emerald-100/40">
           {backend === "supabase"
             ? "Synced to Supabase"
@@ -115,7 +165,7 @@ export default function Home() {
       {loading ? (
         <div className="mt-20 text-center text-emerald-100/60">Loading…</div>
       ) : view === "stats" ? (
-        <StatsView records={records} />
+        <StatsView records={records} removeGame={removeGame} />
       ) : (
         <>
           {/* Controls */}

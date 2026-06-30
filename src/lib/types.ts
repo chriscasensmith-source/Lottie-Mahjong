@@ -34,11 +34,16 @@ export interface Section {
   hands: Hand[];
 }
 
-// A single logged win, as stored in Supabase (or localStorage fallback).
-export interface WinRecord {
+// The result of a single game.
+export type GameOutcome = "win" | "loss" | "wall";
+
+// A single logged game, as stored in Supabase (or localStorage fallback).
+// Wins reference the hand that was made; losses and walls have no hand.
+export interface GameRecord {
   id?: string; // uuid from Supabase, or a temporary client id when offline
-  hand_id: string;
-  won_at: string; // ISO timestamp
+  hand_id: string | null;
+  outcome: GameOutcome;
+  won_at: string; // ISO timestamp of the game
 }
 
 export type HandFilter = "all" | "played" | "unplayed";

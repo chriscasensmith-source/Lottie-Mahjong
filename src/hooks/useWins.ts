@@ -2,29 +2,47 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
-import type { WinRecord } from "@/lib/types";
+import type { GameOutcome, GameRecord } from "@/lib/types";
 
-const LOCAL_KEY = "mahjong_win_records";
-const LEGACY_KEY = "mahjong_wins"; // older counts-only format
+const LOCAL_KEY = "mahjong_game_records";
+const LEGACY_RECORDS_KEY = "mahjong_win_records"; // wins-only records
+const LEGACY_COUNTS_KEY = "mahjong_wins"; // oldest { handId: count } format
 
 // localStorage helpers (used when Supabase env vars are absent).
-function readLocal(): WinRecord[] {
+function readLocal(): GameRecord[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(LOCAL_KEY);
-    if (raw) return JSON.parse(raw) as WinRecord[];
-    // Migrate the older { handId: count } format, if present.
-    const legacy = window.localStorage.getItem(LEGACY_KEY);
-    if (legacy) {
-      const counts = JSON.parse(legacy) as Record<string, number>;
+    if (raw) return JSON.parse(raw) as GameRecord[];
+
+    // Migrate the wins-only records format.
+    const recs = window.localStorage.getItem(LEGACY_RECORDS_KEY);
+    if (recs) {
+      const old = JSON.parse(recs) as {
+        id?: string;
+        hand_id: string;
+        won_at: string;
+      }[];
+      return old.map((r) => ({ ...r, outcome: "win" as GameOutcome }));
+    }
+
+    // Migrate the oldest { handId: count } format.
+    const counts = window.localStorage.getItem(LEGACY_COUNTS_KEY);
+    if (counts) {
+      const map = JSON.parse(counts) as Record<string, number>;
       const now = new Date().toISOString();
-      const migrated: WinRecord[] = [];
-      for (const [hand_id, count] of Object.entries(counts)) {
+      const out: GameRecord[] = [];
+      for (const [hand_id, count] of Object.entries(map)) {
         for (let i = 0; i < count; i++) {
-          migrated.push({ id: `legacy-${hand_id}-${i}`, hand_id, won_at: now });
+          out.push({
+            id: `legacy-${hand_id}-${i}`,
+            hand_id,
+            outcome: "win",
+            won_at: now,
+          });
         }
       }
-      return migrated;
+      return out;
     }
     return [];
   } catch {
@@ -32,7 +50,7 @@ function readLocal(): WinRecord[] {
   }
 }
 
-function writeLocal(records: WinRecord[]) {
+function writeLocal(records: GameRecord[]) {
   window.localStorage.setItem(LOCAL_KEY, JSON.stringify(records));
 }
 
@@ -41,26 +59,33 @@ function tempId() {
 }
 
 export interface UseWins {
-  records: WinRecord[];
+  records: GameRecord[];
+  /** Wins per hand id. */
   counts: Record<string, number>;
   loading: boolean;
-  /** Total wins logged across all hands. */
   totalWins: number;
-  /** Number of distinct hands won at least once. */
+  totalLosses: number;
+  totalWalls: number;
+  totalGames: number;
+  /** Distinct hands won at least once. */
   playedCount: number;
   logWin: (handId: string) => Promise<void>;
+  logLoss: () => Promise<void>;
+  logWall: () => Promise<void>;
+  /** Remove the most recent win for a hand. */
   undoWin: (handId: string) => Promise<void>;
+  /** Remove a specific game record (used by the activity feed). */
+  removeGame: (record: GameRecord) => Promise<void>;
   backend: "supabase" | "local";
 }
 
 export function useWins(): UseWins {
-  const [records, setRecords] = useState<WinRecord[]>([]);
+  const [records, setRecords] = useState<GameRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const backend = isSupabaseConfigured ? "supabase" : "local";
 
-  // Mirror of the latest records so callbacks can read current state without
-  // going stale or depending on it.
-  const recordsRef = useRef<WinRecord[]>([]);
+  // Mirror of latest records so callbacks read current state without going stale.
+  const recordsRef = useRef<GameRecord[]>([]);
   useEffect(() => {
     recordsRef.current = records;
   }, [records]);
@@ -70,11 +95,9 @@ export function useWins(): UseWins {
     let active = true;
     async function load() {
       if (supabase) {
-        // Don't let a slow/unreachable database hang the UI forever — race the
-        // query against a timeout and fall back to whatever we have locally.
         const query = supabase
           .from("mahjong_wins")
-          .select("id, hand_id, won_at")
+          .select("id, hand_id, won_at, outcome")
           .order("won_at", { ascending: true });
         const timeout = new Promise<{ timedOut: true }>((resolve) =>
           setTimeout(() => resolve({ timedOut: true }), 5000),
@@ -85,13 +108,10 @@ export function useWins(): UseWins {
           console.warn("Supabase load timed out; using local data.");
           setRecords(readLocal());
         } else if (result.error) {
-          console.error(
-            "Failed to load wins from Supabase:",
-            result.error.message,
-          );
+          console.error("Failed to load games:", result.error.message);
           setRecords(readLocal());
         } else {
-          setRecords((result.data ?? []) as WinRecord[]);
+          setRecords((result.data ?? []) as GameRecord[]);
         }
       } else {
         setRecords(readLocal());
@@ -104,65 +124,88 @@ export function useWins(): UseWins {
     };
   }, []);
 
-  const logWin = useCallback(async (handId: string) => {
-    const optimistic: WinRecord = {
-      id: tempId(),
-      hand_id: handId,
-      won_at: new Date().toISOString(),
-    };
-    setRecords((prev) => {
-      const next = [...prev, optimistic];
-      if (!isSupabaseConfigured) writeLocal(next);
-      return next;
-    });
+  const addGame = useCallback(
+    async (outcome: GameOutcome, handId: string | null) => {
+      const optimistic: GameRecord = {
+        id: tempId(),
+        hand_id: handId,
+        outcome,
+        won_at: new Date().toISOString(),
+      };
+      setRecords((prev) => {
+        const next = [...prev, optimistic];
+        if (!isSupabaseConfigured) writeLocal(next);
+        return next;
+      });
 
-    if (supabase) {
-      const { data, error } = await supabase
-        .from("mahjong_wins")
-        .insert({ hand_id: handId })
-        .select("id, hand_id, won_at")
-        .single();
-      if (error) {
-        console.error("Failed to log win:", error.message);
-        // Roll back the optimistic record.
-        setRecords((prev) => prev.filter((r) => r.id !== optimistic.id));
-      } else if (data) {
-        // Replace the temp record with the real one from the server.
-        setRecords((prev) =>
-          prev.map((r) => (r.id === optimistic.id ? (data as WinRecord) : r)),
-        );
+      if (supabase) {
+        const { data, error } = await supabase
+          .from("mahjong_wins")
+          .insert({ hand_id: handId, outcome })
+          .select("id, hand_id, won_at, outcome")
+          .single();
+        if (error) {
+          console.error("Failed to log game:", error.message);
+          setRecords((prev) => prev.filter((r) => r.id !== optimistic.id));
+        } else if (data) {
+          setRecords((prev) =>
+            prev.map((r) =>
+              r.id === optimistic.id ? (data as GameRecord) : r,
+            ),
+          );
+        }
       }
-    }
-  }, []);
+    },
+    [],
+  );
 
-  const undoWin = useCallback(async (handId: string) => {
-    // Find the most recent record for this hand from current state.
-    const forHand = recordsRef.current.filter((r) => r.hand_id === handId);
-    if (forHand.length === 0) return;
-    const target = forHand.reduce((a, b) => (a.won_at >= b.won_at ? a : b));
+  const logWin = useCallback((handId: string) => addGame("win", handId), [
+    addGame,
+  ]);
+  const logLoss = useCallback(() => addGame("loss", null), [addGame]);
+  const logWall = useCallback(() => addGame("wall", null), [addGame]);
 
+  const removeGame = useCallback(async (record: GameRecord) => {
     setRecords((prev) => {
-      const next = prev.filter((r) => r !== target);
+      const next = prev.filter((r) => r !== record);
       if (!isSupabaseConfigured) writeLocal(next);
       return next;
     });
-
-    if (supabase && target.id && !target.id.startsWith("tmp-")) {
+    if (supabase && record.id && !record.id.startsWith("tmp-")) {
       const { error } = await supabase
         .from("mahjong_wins")
         .delete()
-        .eq("id", target.id);
-      if (error) console.error("Failed to undo win:", error.message);
+        .eq("id", record.id);
+      if (error) console.error("Failed to remove game:", error.message);
     }
   }, []);
 
+  const undoWin = useCallback(
+    async (handId: string) => {
+      const wins = recordsRef.current.filter(
+        (r) => r.hand_id === handId && r.outcome === "win",
+      );
+      if (wins.length === 0) return;
+      const target = wins.reduce((a, b) => (a.won_at >= b.won_at ? a : b));
+      await removeGame(target);
+    },
+    [removeGame],
+  );
+
   const counts = useMemo(() => {
     const tally: Record<string, number> = {};
-    for (const r of records) tally[r.hand_id] = (tally[r.hand_id] ?? 0) + 1;
+    for (const r of records) {
+      if (r.outcome === "win" && r.hand_id) {
+        tally[r.hand_id] = (tally[r.hand_id] ?? 0) + 1;
+      }
+    }
     return tally;
   }, [records]);
 
-  const totalWins = records.length;
+  const totalWins = records.filter((r) => r.outcome === "win").length;
+  const totalLosses = records.filter((r) => r.outcome === "loss").length;
+  const totalWalls = records.filter((r) => r.outcome === "wall").length;
+  const totalGames = records.length;
   const playedCount = Object.keys(counts).length;
 
   return {
@@ -170,9 +213,15 @@ export function useWins(): UseWins {
     counts,
     loading,
     totalWins,
+    totalLosses,
+    totalWalls,
+    totalGames,
     playedCount,
     logWin,
+    logLoss,
+    logWall,
     undoWin,
+    removeGame,
     backend,
   };
 }

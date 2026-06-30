@@ -1,5 +1,5 @@
 import { ALL_HANDS, SECTIONS } from "@/data/hands";
-import type { Hand, WinRecord } from "@/lib/types";
+import type { GameOutcome, GameRecord, Hand } from "@/lib/types";
 
 // hand id -> hand, and hand id -> its section (id + display name).
 const HAND_BY_ID = new Map<string, Hand>(ALL_HANDS.map((h) => [h.id, h]));
@@ -14,25 +14,48 @@ export function handById(id: string): Hand | undefined {
   return HAND_BY_ID.get(id);
 }
 
+const wins = (records: GameRecord[]) =>
+  records.filter((r) => r.outcome === "win" && r.hand_id);
+
+export interface OutcomeTotals {
+  win: number;
+  loss: number;
+  wall: number;
+  total: number;
+  winRate: number; // 0–100, share of all games that were wins
+}
+
+export function outcomeTotals(records: GameRecord[]): OutcomeTotals {
+  let win = 0,
+    loss = 0,
+    wall = 0;
+  for (const r of records) {
+    if (r.outcome === "win") win++;
+    else if (r.outcome === "loss") loss++;
+    else wall++;
+  }
+  const total = win + loss + wall;
+  return { win, loss, wall, total, winRate: total ? (win / total) * 100 : 0 };
+}
+
 export interface SectionStat {
   id: string;
   name: string;
   accentClass: string;
   wins: number;
-  total: number; // hands in section
-  playedHands: number; // distinct hands won at least once
+  total: number;
+  playedHands: number;
 }
 
-// Wins per section, in card order.
-export function winsBySection(records: WinRecord[]): SectionStat[] {
+export function winsBySection(records: GameRecord[]): SectionStat[] {
   const winCount = new Map<string, number>();
   const playedSet = new Map<string, Set<string>>();
-  for (const r of records) {
-    const sec = HAND_SECTION.get(r.hand_id);
+  for (const r of wins(records)) {
+    const sec = HAND_SECTION.get(r.hand_id!);
     if (!sec) continue;
     winCount.set(sec.id, (winCount.get(sec.id) ?? 0) + 1);
     if (!playedSet.has(sec.id)) playedSet.set(sec.id, new Set());
-    playedSet.get(sec.id)!.add(r.hand_id);
+    playedSet.get(sec.id)!.add(r.hand_id!);
   }
   return SECTIONS.map((s) => ({
     id: s.id,
@@ -50,18 +73,18 @@ export interface HandStat {
   wins: number;
 }
 
-// Most-won hands, highest first.
-export function topHands(records: WinRecord[], limit = 6): HandStat[] {
+export function topHands(records: GameRecord[], limit = 6): HandStat[] {
   const tally = new Map<string, number>();
-  for (const r of records) tally.set(r.hand_id, (tally.get(r.hand_id) ?? 0) + 1);
+  for (const r of wins(records))
+    tally.set(r.hand_id!, (tally.get(r.hand_id!) ?? 0) + 1);
   const stats: HandStat[] = [];
-  for (const [handId, wins] of tally) {
+  for (const [handId, count] of tally) {
     const hand = HAND_BY_ID.get(handId);
     if (!hand) continue;
     stats.push({
       hand,
       sectionName: HAND_SECTION.get(handId)?.name ?? "",
-      wins,
+      wins: count,
     });
   }
   stats.sort((a, b) => b.wins - a.wins);
@@ -69,17 +92,17 @@ export function topHands(records: WinRecord[], limit = 6): HandStat[] {
 }
 
 export interface DayBucket {
-  key: string; // YYYY-MM-DD
-  label: string; // e.g. "6/30"
-  weekday: string; // e.g. "Mon"
+  key: string;
+  label: string;
+  weekday: string;
   count: number;
 }
 
 // Wins per day for the last `days` days (oldest -> newest), including zeros.
-export function winsByDay(records: WinRecord[], days = 14): DayBucket[] {
+export function winsByDay(records: GameRecord[], days = 14): DayBucket[] {
   const buckets: DayBucket[] = [];
   const byKey = new Map<string, number>();
-  for (const r of records) {
+  for (const r of wins(records)) {
     const key = r.won_at.slice(0, 10);
     byKey.set(key, (byKey.get(key) ?? 0) + 1);
   }
@@ -98,29 +121,35 @@ export function winsByDay(records: WinRecord[], days = 14): DayBucket[] {
   return buckets;
 }
 
-export interface RecentWin {
-  record: WinRecord;
-  hand: Hand;
+export interface ActivityItem {
+  record: GameRecord;
+  outcome: GameOutcome;
+  hand: Hand | null;
   sectionName: string;
 }
 
-// Most recent wins, newest first.
-export function recentWins(records: WinRecord[], limit = 8): RecentWin[] {
+// Most recent games of any outcome, newest first.
+export function recentActivity(
+  records: GameRecord[],
+  limit = 10,
+): ActivityItem[] {
   return [...records]
     .sort((a, b) => (a.won_at < b.won_at ? 1 : -1))
     .slice(0, limit)
     .map((record) => ({
       record,
-      hand: HAND_BY_ID.get(record.hand_id)!,
-      sectionName: HAND_SECTION.get(record.hand_id)?.name ?? "",
-    }))
-    .filter((r) => r.hand);
+      outcome: record.outcome,
+      hand: record.hand_id ? (HAND_BY_ID.get(record.hand_id) ?? null) : null,
+      sectionName: record.hand_id
+        ? (HAND_SECTION.get(record.hand_id)?.name ?? "")
+        : "",
+    }));
 }
 
-// Total points scored across all logged wins.
-export function totalPoints(records: WinRecord[]): number {
+// Total points scored across winning hands.
+export function totalPoints(records: GameRecord[]): number {
   let sum = 0;
-  for (const r of records) sum += HAND_BY_ID.get(r.hand_id)?.points ?? 0;
+  for (const r of wins(records)) sum += HAND_BY_ID.get(r.hand_id!)?.points ?? 0;
   return sum;
 }
 
