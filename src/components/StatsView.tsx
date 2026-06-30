@@ -259,8 +259,8 @@ export function StatsView({ records, removeGame }: StatsViewProps) {
                   </span>
                   <button
                     onClick={() => removeGame(a.record)}
-                    title="Remove"
-                    className="text-xs text-emerald-100/30 opacity-0 transition-opacity hover:text-rose-300 group-hover:opacity-100"
+                    title="Remove this game"
+                    className="rounded-full px-1.5 py-0.5 text-xs text-emerald-100/40 transition-colors hover:bg-rose-500/15 hover:text-rose-300"
                   >
                     ✕
                   </button>

@@ -43,15 +43,30 @@ export default function Home() {
   const [view, setView] = useState<View>("hands");
   const [filter, setFilter] = useState<HandFilter>("all");
   const [query, setQuery] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{
+    label: string;
+    outcome: "loss" | "wall";
+  } | null>(null);
 
   const q = query.trim().toLowerCase();
 
   function recordResult(kind: "loss" | "wall") {
     if (kind === "loss") logLoss();
     else logWall();
-    setToast(kind === "loss" ? "Loss recorded" : "Wall game recorded");
-    window.setTimeout(() => setToast(null), 1800);
+    setToast({
+      label: kind === "loss" ? "Loss recorded" : "Wall game recorded",
+      outcome: kind,
+    });
+    window.setTimeout(() => setToast(null), 5000);
+  }
+
+  function undoToast() {
+    if (!toast) return;
+    const last = records
+      .filter((r) => r.outcome === toast.outcome)
+      .sort((a, b) => (a.won_at < b.won_at ? 1 : -1))[0];
+    if (last) removeGame(last);
+    setToast(null);
   }
 
   const sections = useMemo(() => {
@@ -81,9 +96,15 @@ export default function Home() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-stone-900/90 px-4 py-2 text-sm font-medium text-white shadow-lg ring-1 ring-white/10 backdrop-blur"
+            className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-stone-900/90 py-2 pl-4 pr-2 text-sm font-medium text-white shadow-lg ring-1 ring-white/10 backdrop-blur"
           >
-            {toast}
+            <span>{toast.label}</span>
+            <button
+              onClick={undoToast}
+              className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-white/25"
+            >
+              Undo
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
