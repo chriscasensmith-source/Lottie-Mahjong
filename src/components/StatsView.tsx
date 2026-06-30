@@ -1,13 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import type { TileColor, WinRecord } from "@/lib/types";
+import type { GameOutcome, GameRecord, TileColor } from "@/lib/types";
 import { ALL_HANDS } from "@/data/hands";
 import {
   winsBySection,
   topHands,
   winsByDay,
-  recentWins,
+  recentActivity,
+  outcomeTotals,
   totalPoints,
   relativeTime,
 } from "@/lib/stats";
@@ -19,20 +20,27 @@ const COLOR_CLASS: Record<TileColor, string> = {
   neutral: "text-tile-neutral",
 };
 
+const OUTCOME_META: Record<
+  GameOutcome,
+  { label: string; emoji: string; bar: string; text: string }
+> = {
+  win: { label: "Win", emoji: "🏆", bar: "bg-emerald-400", text: "text-emerald-300" },
+  loss: { label: "Loss", emoji: "❌", bar: "bg-rose-400", text: "text-rose-300" },
+  wall: { label: "Wall", emoji: "🧱", bar: "bg-amber-400", text: "text-amber-300" },
+};
+
 function Card({
   title,
   children,
-  className = "",
 }: {
   title: string;
   children: React.ReactNode;
-  className?: string;
 }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`rounded-2xl bg-white/5 p-5 ring-1 ring-white/10 backdrop-blur ${className}`}
+      className="rounded-2xl bg-white/5 p-5 ring-1 ring-white/10 backdrop-blur"
     >
       <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-emerald-100/70">
         {title}
@@ -42,43 +50,44 @@ function Card({
   );
 }
 
-export function StatsView({ records }: { records: WinRecord[] }) {
+interface StatsViewProps {
+  records: GameRecord[];
+  removeGame: (record: GameRecord) => void;
+}
+
+export function StatsView({ records, removeGame }: StatsViewProps) {
+  const o = outcomeTotals(records);
   const sections = winsBySection(records);
   const top = topHands(records, 6);
   const days = winsByDay(records, 14);
-  const recent = recentWins(records, 8);
+  const activity = recentActivity(records, 10);
   const points = totalPoints(records);
-
-  const totalWins = records.length;
-  const playedHands = new Set(records.map((r) => r.hand_id)).size;
+  const playedHands = new Set(
+    records.filter((r) => r.outcome === "win" && r.hand_id).map((r) => r.hand_id),
+  ).size;
   const maxSectionWins = Math.max(1, ...sections.map((s) => s.wins));
   const maxDay = Math.max(1, ...days.map((d) => d.count));
-  const best = [...sections].sort((a, b) => b.wins - a.wins)[0];
 
-  if (totalWins === 0) {
+  if (o.total === 0) {
     return (
       <div className="mt-16 text-center text-emerald-100/60">
         <p className="text-5xl">📊</p>
         <p className="mt-3 text-lg font-medium text-emerald-100/80">
-          No wins logged yet
+          No games logged yet
         </p>
         <p className="mt-1 text-sm">
-          Tap <span className="font-semibold">+ Log win</span> on a hand and your
-          stats will appear here.
+          Log a win on a hand, or record a loss / wall game — your stats will
+          appear here.
         </p>
       </div>
     );
   }
 
   const summary = [
-    { label: "Total wins", value: totalWins, accent: "text-emerald-300" },
-    {
-      label: "Hands played",
-      value: `${playedHands}/${ALL_HANDS.length}`,
-      accent: "text-white",
-    },
-    { label: "Points scored", value: points, accent: "text-amber-300" },
-    { label: "Top section", value: best?.wins ? best.name : "—", accent: "text-tile-blue" },
+    { label: "Games", value: o.total, accent: "text-white" },
+    { label: "Wins", value: o.win, accent: "text-emerald-300" },
+    { label: "Win rate", value: `${Math.round(o.winRate)}%`, accent: "text-tile-blue" },
+    { label: "Points", value: points, accent: "text-amber-300" },
   ];
 
   return (
@@ -100,6 +109,40 @@ export function StatsView({ records }: { records: WinRecord[] }) {
           </motion.div>
         ))}
       </div>
+
+      {/* Outcome breakdown */}
+      <Card title="Game outcomes">
+        <div className="flex h-4 w-full overflow-hidden rounded-full bg-white/10">
+          {(["win", "loss", "wall"] as GameOutcome[]).map((k) => {
+            const count = o[k];
+            const pct = o.total ? (count / o.total) * 100 : 0;
+            if (!pct) return null;
+            return (
+              <motion.div
+                key={k}
+                initial={{ width: 0 }}
+                animate={{ width: `${pct}%` }}
+                transition={{ type: "spring", stiffness: 120, damping: 20 }}
+                className={OUTCOME_META[k].bar}
+                title={`${OUTCOME_META[k].label}: ${count}`}
+              />
+            );
+          })}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-4 text-sm">
+          {(["win", "loss", "wall"] as GameOutcome[]).map((k) => (
+            <div key={k} className="flex items-center gap-1.5">
+              <span
+                className={`inline-block h-2.5 w-2.5 rounded-sm ${OUTCOME_META[k].bar}`}
+              />
+              <span className="text-emerald-50">{OUTCOME_META[k].label}</span>
+              <span className="font-semibold tabular-nums text-emerald-100/70">
+                {o[k]}
+              </span>
+            </div>
+          ))}
+        </div>
+      </Card>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* Wins by section */}
@@ -127,12 +170,12 @@ export function StatsView({ records }: { records: WinRecord[] }) {
         </Card>
 
         {/* Wins over time */}
-        <Card title="Last 14 days">
+        <Card title="Wins · last 14 days">
           <div className="flex h-40 items-end gap-1.5">
             {days.map((d) => (
               <div
                 key={d.key}
-                className="group flex flex-1 flex-col items-center gap-1"
+                className="flex flex-1 flex-col items-center gap-1"
                 title={`${d.label}: ${d.count} win${d.count === 1 ? "" : "s"}`}
               >
                 <div className="flex h-32 w-full items-end">
@@ -187,25 +230,41 @@ export function StatsView({ records }: { records: WinRecord[] }) {
           )}
         </Card>
 
-        {/* Recent wins */}
-        <Card title="Recent wins">
+        {/* Recent activity */}
+        <Card title="Recent activity">
           <ul className="space-y-2">
-            {recent.map((r) => (
+            {activity.map((a) => (
               <li
-                key={r.record.id ?? r.record.won_at}
-                className="flex items-center justify-between gap-3 rounded-xl bg-white/5 px-3 py-2"
+                key={a.record.id ?? a.record.won_at}
+                className="group flex items-center justify-between gap-3 rounded-xl bg-white/5 px-3 py-2"
               >
-                <div className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm font-medium text-emerald-50">
-                    {r.sectionName}
-                  </span>
-                  <span className="truncate text-xs text-emerald-100/50">
-                    {r.hand.pattern.map((g) => g.text).join(" ")}
-                  </span>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="text-base">{OUTCOME_META[a.outcome].emoji}</span>
+                  <div className="flex min-w-0 flex-col">
+                    <span
+                      className={`text-sm font-medium ${OUTCOME_META[a.outcome].text}`}
+                    >
+                      {a.hand ? a.sectionName : OUTCOME_META[a.outcome].label}
+                    </span>
+                    {a.hand && (
+                      <span className="truncate text-xs text-emerald-100/50">
+                        {a.hand.pattern.map((g) => g.text).join(" ")}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <span className="shrink-0 text-xs text-emerald-100/50">
-                  {relativeTime(r.record.won_at)}
-                </span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-xs text-emerald-100/50">
+                    {relativeTime(a.record.won_at)}
+                  </span>
+                  <button
+                    onClick={() => removeGame(a.record)}
+                    title="Remove this game"
+                    className="rounded-full px-1.5 py-0.5 text-xs text-emerald-100/40 transition-colors hover:bg-rose-500/15 hover:text-rose-300"
+                  >
+                    ✕
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

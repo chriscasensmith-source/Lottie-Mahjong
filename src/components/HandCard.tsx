@@ -79,8 +79,10 @@ export function HandCard({
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ type: "spring", stiffness: 300, damping: 26 }}
       whileHover={{ y: -4 }}
-      className={`relative flex flex-col overflow-hidden rounded-2xl bg-stone-50 text-stone-900 shadow-lg ring-2 transition-shadow ${
-        played ? "ring-emerald-400" : "ring-transparent"
+      className={`relative flex flex-col overflow-hidden rounded-2xl bg-stone-50 text-stone-900 shadow-lg ring-2 transition-all duration-200 ${
+        played
+          ? "opacity-65 ring-emerald-400 hover:opacity-100"
+          : "ring-transparent"
       }`}
     >
       <AnimatePresence>{showBurst && <Burst key={burstKey} />}</AnimatePresence>
