@@ -44,16 +44,26 @@ export function useWins(): UseWins {
     let active = true;
     async function load() {
       if (supabase) {
-        const { data, error } = await supabase
-          .from("mahjong_wins")
-          .select("hand_id");
+        // Don't let a slow/unreachable database hang the UI forever — race the
+        // query against a timeout and fall back to whatever we have locally.
+        const query = supabase.from("mahjong_wins").select("hand_id");
+        const timeout = new Promise<{ timedOut: true }>((resolve) =>
+          setTimeout(() => resolve({ timedOut: true }), 5000),
+        );
+        const result = await Promise.race([query, timeout]);
         if (!active) return;
-        if (error) {
-          console.error("Failed to load wins from Supabase:", error.message);
+        if ("timedOut" in result) {
+          console.warn("Supabase load timed out; using local data.");
+          setCounts(readLocal());
+        } else if (result.error) {
+          console.error(
+            "Failed to load wins from Supabase:",
+            result.error.message,
+          );
           setCounts(readLocal());
         } else {
           const tally: Counts = {};
-          for (const row of data ?? []) {
+          for (const row of result.data ?? []) {
             tally[row.hand_id] = (tally[row.hand_id] ?? 0) + 1;
           }
           setCounts(tally);
