@@ -9,9 +9,16 @@ import { StatsBar } from "@/components/StatsBar";
 import { FilterBar } from "@/components/FilterBar";
 import { HandCard } from "@/components/HandCard";
 import { StatsView } from "@/components/StatsView";
+import { CalendarView } from "@/components/CalendarView";
 import type { Hand, HandFilter } from "@/lib/types";
 
-type View = "hands" | "stats";
+type View = "hands" | "stats" | "calendar";
+
+const VIEW_LABEL: Record<View, string> = {
+  hands: "🀙 Hands",
+  stats: "📊 Stats",
+  calendar: "📅 Calendar",
+};
 
 function handMatches(hand: Hand, sectionName: string, q: string): boolean {
   if (!q) return true;
@@ -125,13 +132,13 @@ export default function Home() {
 
         {/* View switcher */}
         <div className="inline-flex rounded-full bg-black/25 p-1 backdrop-blur">
-          {(["hands", "stats"] as View[]).map((v) => {
+          {(["hands", "stats", "calendar"] as View[]).map((v) => {
             const active = view === v;
             return (
               <button
                 key={v}
                 onClick={() => setView(v)}
-                className="relative rounded-full px-5 py-1.5 text-sm font-semibold capitalize"
+                className="relative rounded-full px-4 py-1.5 text-sm font-semibold capitalize sm:px-5"
               >
                 {active && (
                   <motion.span
@@ -145,7 +152,7 @@ export default function Home() {
                     active ? "text-emerald-950" : "text-emerald-100/80"
                   }`}
                 >
-                  {v === "hands" ? "🀙 Hands" : "📊 Stats"}
+                  {VIEW_LABEL[v]}
                 </span>
               </button>
             );
@@ -187,6 +194,8 @@ export default function Home() {
         <div className="mt-20 text-center text-emerald-100/60">Loading…</div>
       ) : view === "stats" ? (
         <StatsView records={records} removeGame={removeGame} />
+      ) : view === "calendar" ? (
+        <CalendarView records={records} removeGame={removeGame} />
       ) : (
         <>
           {/* Controls */}
