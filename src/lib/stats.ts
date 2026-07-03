@@ -98,19 +98,37 @@ export interface DayBucket {
   count: number;
 }
 
+// YYYY-MM-DD in the *local* timezone, so an evening game lands on the right day.
+export function localDayKey(date: Date): string {
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${m}-${d}`;
+}
+
+// All games grouped by local day, each day's list oldest-first.
+export function gamesByDay(records: GameRecord[]): Map<string, GameRecord[]> {
+  const map = new Map<string, GameRecord[]>();
+  for (const r of [...records].sort((a, b) => (a.won_at < b.won_at ? -1 : 1))) {
+    const key = localDayKey(new Date(r.won_at));
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(r);
+  }
+  return map;
+}
+
 // Wins per day for the last `days` days (oldest -> newest), including zeros.
 export function winsByDay(records: GameRecord[], days = 14): DayBucket[] {
   const buckets: DayBucket[] = [];
   const byKey = new Map<string, number>();
   for (const r of wins(records)) {
-    const key = r.won_at.slice(0, 10);
+    const key = localDayKey(new Date(r.won_at));
     byKey.set(key, (byKey.get(key) ?? 0) + 1);
   }
   const today = new Date();
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
+    const key = localDayKey(d);
     buckets.push({
       key,
       label: `${d.getMonth() + 1}/${d.getDate()}`,
