@@ -69,9 +69,9 @@ export interface UseWins {
   totalGames: number;
   /** Distinct hands won at least once. */
   playedCount: number;
-  logWin: (handId: string) => Promise<void>;
-  logLoss: () => Promise<void>;
-  logWall: () => Promise<void>;
+  logWin: (handId: string, at?: Date) => Promise<void>;
+  logLoss: (at?: Date) => Promise<void>;
+  logWall: (at?: Date) => Promise<void>;
   /** Remove the most recent win for a hand. */
   undoWin: (handId: string) => Promise<void>;
   /** Remove a specific game record (used by the activity feed). */
@@ -125,12 +125,14 @@ export function useWins(): UseWins {
   }, []);
 
   const addGame = useCallback(
-    async (outcome: GameOutcome, handId: string | null) => {
+    async (outcome: GameOutcome, handId: string | null, at?: Date) => {
+      // `at` lets you backdate a game (e.g. entering a day you missed).
+      const won_at = (at ?? new Date()).toISOString();
       const optimistic: GameRecord = {
         id: tempId(),
         hand_id: handId,
         outcome,
-        won_at: new Date().toISOString(),
+        won_at,
       };
       setRecords((prev) => {
         const next = [...prev, optimistic];
@@ -141,7 +143,7 @@ export function useWins(): UseWins {
       if (supabase) {
         const { data, error } = await supabase
           .from("mahjong_wins")
-          .insert({ hand_id: handId, outcome })
+          .insert({ hand_id: handId, outcome, won_at })
           .select("id, hand_id, won_at, outcome")
           .single();
         if (error) {
@@ -159,11 +161,16 @@ export function useWins(): UseWins {
     [],
   );
 
-  const logWin = useCallback((handId: string) => addGame("win", handId), [
+  const logWin = useCallback(
+    (handId: string, at?: Date) => addGame("win", handId, at),
+    [addGame],
+  );
+  const logLoss = useCallback((at?: Date) => addGame("loss", null, at), [
     addGame,
   ]);
-  const logLoss = useCallback(() => addGame("loss", null), [addGame]);
-  const logWall = useCallback(() => addGame("wall", null), [addGame]);
+  const logWall = useCallback((at?: Date) => addGame("wall", null, at), [
+    addGame,
+  ]);
 
   const removeGame = useCallback(async (record: GameRecord) => {
     setRecords((prev) => {

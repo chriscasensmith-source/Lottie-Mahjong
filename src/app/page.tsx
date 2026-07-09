@@ -195,7 +195,13 @@ export default function Home() {
       ) : view === "stats" ? (
         <StatsView records={records} removeGame={removeGame} />
       ) : view === "calendar" ? (
-        <CalendarView records={records} removeGame={removeGame} />
+        <CalendarView
+          records={records}
+          removeGame={removeGame}
+          logWin={logWin}
+          logLoss={logLoss}
+          logWall={logWall}
+        />
       ) : (
         <>
           {/* Controls */}

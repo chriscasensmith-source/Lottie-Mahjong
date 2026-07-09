@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { GameOutcome, GameRecord, TileColor } from "@/lib/types";
 import { gamesByDay, localDayKey, handById, relativeTime } from "@/lib/stats";
+import { SECTIONS } from "@/data/hands";
 
 const COLOR_CLASS: Record<TileColor, string> = {
   green: "text-tile-green",
@@ -34,9 +35,18 @@ function cellTier(count: number): string {
 interface CalendarViewProps {
   records: GameRecord[];
   removeGame: (record: GameRecord) => void;
+  logWin: (handId: string, at?: Date) => void;
+  logLoss: (at?: Date) => void;
+  logWall: (at?: Date) => void;
 }
 
-export function CalendarView({ records, removeGame }: CalendarViewProps) {
+export function CalendarView({
+  records,
+  removeGame,
+  logWin,
+  logLoss,
+  logWall,
+}: CalendarViewProps) {
   const today = new Date();
   const todayKey = localDayKey(today);
   const [year, setYear] = useState(today.getFullYear());
@@ -81,6 +91,15 @@ export function CalendarView({ records, removeGame }: CalendarViewProps) {
     month: "long",
     day: "numeric",
   });
+  const isFuture = selectedKey > todayKey;
+
+  // Timestamp on the selected day, using the current time-of-day so a
+  // backdated entry gets a sensible time and stable ordering.
+  function atDate(): Date {
+    const [sy, sm, sd] = selectedKey.split("-").map(Number);
+    const now = new Date();
+    return new Date(sy, sm - 1, sd, now.getHours(), now.getMinutes(), now.getSeconds());
+  }
 
   const dayTiles = [
     { label: "Games", value: dayGames.length, accent: "text-white" },
@@ -185,6 +204,53 @@ export function CalendarView({ records, removeGame }: CalendarViewProps) {
         className="rounded-2xl bg-white/5 p-5 ring-1 ring-white/10 backdrop-blur"
       >
         <h3 className="text-lg font-bold text-emerald-50">{selectedLabel}</h3>
+
+        {/* Add a game to this day (backdating for missed entries) */}
+        {isFuture ? (
+          <p className="mt-3 text-sm text-emerald-100/40">
+            Can&apos;t add games to a future day.
+          </p>
+        ) : (
+          <div className="mt-3 rounded-xl bg-white/5 p-3 ring-1 ring-white/10">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-100/60">
+              Add a game to this day
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) logWin(e.target.value, atDate());
+                }}
+                aria-label="Add a winning hand to this day"
+                className="min-w-0 flex-1 rounded-lg border border-white/15 bg-stone-900/50 px-2 py-2 text-sm text-emerald-50 outline-none focus:border-emerald-400"
+              >
+                <option value="">🏆 Add a win…</option>
+                {SECTIONS.map((s) => (
+                  <optgroup key={s.id} label={s.name}>
+                    {s.hands.map((h) => (
+                      <option key={h.id} value={h.id}>
+                        {h.pattern.map((p) => p.text).join(" ")} · {h.points}
+                        {h.concealed ? "C" : "X"}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <button
+                onClick={() => logLoss(atDate())}
+                className="rounded-lg bg-rose-500/15 px-3 py-2 text-sm font-semibold text-rose-200 ring-1 ring-rose-400/30 transition-colors hover:bg-rose-500/25"
+              >
+                + Loss
+              </button>
+              <button
+                onClick={() => logWall(atDate())}
+                className="rounded-lg bg-amber-500/15 px-3 py-2 text-sm font-semibold text-amber-200 ring-1 ring-amber-400/30 transition-colors hover:bg-amber-500/25"
+              >
+                + Wall
+              </button>
+            </div>
+          </div>
+        )}
 
         {dayGames.length === 0 ? (
           <div className="mt-10 text-center text-emerald-100/50">
