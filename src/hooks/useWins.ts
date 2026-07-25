@@ -15,7 +15,6 @@ function readLocal(): GameRecord[] {
     const raw = window.localStorage.getItem(LOCAL_KEY);
     if (raw) return JSON.parse(raw) as GameRecord[];
 
-    // Migrate the wins-only records format.
     const recs = window.localStorage.getItem(LEGACY_RECORDS_KEY);
     if (recs) {
       const old = JSON.parse(recs) as {
@@ -26,7 +25,6 @@ function readLocal(): GameRecord[] {
       return old.map((r) => ({ ...r, outcome: "win" as GameOutcome }));
     }
 
-    // Migrate the oldest { handId: count } format.
     const counts = window.localStorage.getItem(LEGACY_COUNTS_KEY);
     if (counts) {
       const map = JSON.parse(counts) as Record<string, number>;
@@ -58,75 +56,116 @@ function tempId() {
   return `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// "loading"  — first fetch in flight
+// "online"   — a fetch succeeded; we're showing live database data
+// "offline"  — no database configured; using this device's local storage
+// "error"    — database is configured but unreachable/erroring (data NOT lost)
+export type SyncStatus = "loading" | "online" | "offline" | "error";
+
 export interface UseWins {
   records: GameRecord[];
-  /** Wins per hand id. */
   counts: Record<string, number>;
   loading: boolean;
+  status: SyncStatus;
+  errorMsg: string | null;
+  reload: () => void;
   totalWins: number;
   totalLosses: number;
   totalWalls: number;
   totalGames: number;
-  /** Distinct hands won at least once. */
   playedCount: number;
   logWin: (handId: string, at?: Date) => Promise<void>;
   logLoss: (at?: Date) => Promise<void>;
   logWall: (at?: Date) => Promise<void>;
-  /** Remove the most recent win for a hand. */
   undoWin: (handId: string) => Promise<void>;
-  /** Remove a specific game record (used by the activity feed). */
   removeGame: (record: GameRecord) => Promise<void>;
-  backend: "supabase" | "local";
+}
+
+// Race a Supabase query against a timeout so a cold-started/slow project can't
+// hang the UI. Returns rows, an error, or a timeout marker.
+async function fetchWithTimeout(ms: number) {
+  const query = supabase!
+    .from("mahjong_wins")
+    .select("id, hand_id, won_at, outcome")
+    .order("won_at", { ascending: true });
+  const timeout = new Promise<{ timedOut: true }>((resolve) =>
+    setTimeout(() => resolve({ timedOut: true }), ms),
+  );
+  return Promise.race([query, timeout]);
 }
 
 export function useWins(): UseWins {
   const [records, setRecords] = useState<GameRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const backend = isSupabaseConfigured ? "supabase" : "local";
+  const [status, setStatus] = useState<SyncStatus>(
+    isSupabaseConfigured ? "loading" : "offline",
+  );
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Mirror of latest records so callbacks read current state without going stale.
   const recordsRef = useRef<GameRecord[]>([]);
   useEffect(() => {
     recordsRef.current = records;
   }, [records]);
 
+  // Load (or reload) from the database. Retries once for cold starts, and on
+  // failure keeps any data already on screen and surfaces an honest error —
+  // it never blanks the screen in a way that looks like data loss.
+  const reload = useCallback(async () => {
+    if (!supabase) {
+      setRecords(readLocal());
+      setStatus("offline");
+      setLoading(false);
+      return;
+    }
+    setStatus((s) => (s === "online" ? "online" : "loading"));
+    setErrorMsg(null);
+
+    let result = await fetchWithTimeout(8000);
+    if ("timedOut" in result) result = await fetchWithTimeout(8000); // cold start retry
+
+    if ("timedOut" in result) {
+      setStatus("error");
+      setErrorMsg(
+        "The database didn't respond in time (it may be waking up). Your data is safe — tap Retry.",
+      );
+      setLoading(false);
+      return;
+    }
+    if (result.error) {
+      setStatus("error");
+      setErrorMsg(result.error.message);
+      setLoading(false);
+      return;
+    }
+    setRecords((result.data ?? []) as GameRecord[]);
+    setStatus("online");
+    setErrorMsg(null);
+    setLoading(false);
+  }, []);
+
   // Initial load.
   useEffect(() => {
-    let active = true;
-    async function load() {
-      if (supabase) {
-        const query = supabase
-          .from("mahjong_wins")
-          .select("id, hand_id, won_at, outcome")
-          .order("won_at", { ascending: true });
-        const timeout = new Promise<{ timedOut: true }>((resolve) =>
-          setTimeout(() => resolve({ timedOut: true }), 5000),
-        );
-        const result = await Promise.race([query, timeout]);
-        if (!active) return;
-        if ("timedOut" in result) {
-          console.warn("Supabase load timed out; using local data.");
-          setRecords(readLocal());
-        } else if (result.error) {
-          console.error("Failed to load games:", result.error.message);
-          setRecords(readLocal());
-        } else {
-          setRecords((result.data ?? []) as GameRecord[]);
-        }
-      } else {
-        setRecords(readLocal());
-      }
-      setLoading(false);
-    }
-    load();
-    return () => {
-      active = false;
+    reload();
+  }, [reload]);
+
+  // Re-fetch when the tab regains focus / becomes visible — so reopening the
+  // app after it was closed picks the data back up instead of showing stale
+  // (or empty) state.
+  useEffect(() => {
+    if (!supabase) return;
+    const onFocus = () => {
+      if (document.visibilityState !== "hidden") reload();
     };
-  }, []);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [reload]);
 
   const addGame = useCallback(
     async (outcome: GameOutcome, handId: string | null, at?: Date) => {
-      // `at` lets you backdate a game (e.g. entering a day you missed).
       const won_at = (at ?? new Date()).toISOString();
       const optimistic: GameRecord = {
         id: tempId(),
@@ -149,12 +188,14 @@ export function useWins(): UseWins {
         if (error) {
           console.error("Failed to log game:", error.message);
           setRecords((prev) => prev.filter((r) => r.id !== optimistic.id));
+          setStatus("error");
+          setErrorMsg(`Couldn't save that game: ${error.message}`);
         } else if (data) {
           setRecords((prev) =>
-            prev.map((r) =>
-              r.id === optimistic.id ? (data as GameRecord) : r,
-            ),
+            prev.map((r) => (r.id === optimistic.id ? (data as GameRecord) : r)),
           );
+          setStatus("online");
+          setErrorMsg(null);
         }
       }
     },
@@ -189,11 +230,13 @@ export function useWins(): UseWins {
 
   const undoWin = useCallback(
     async (handId: string) => {
-      const wins = recordsRef.current.filter(
+      const winsForHand = recordsRef.current.filter(
         (r) => r.hand_id === handId && r.outcome === "win",
       );
-      if (wins.length === 0) return;
-      const target = wins.reduce((a, b) => (a.won_at >= b.won_at ? a : b));
+      if (winsForHand.length === 0) return;
+      const target = winsForHand.reduce((a, b) =>
+        a.won_at >= b.won_at ? a : b,
+      );
       await removeGame(target);
     },
     [removeGame],
@@ -219,6 +262,9 @@ export function useWins(): UseWins {
     records,
     counts,
     loading,
+    status,
+    errorMsg,
+    reload,
     totalWins,
     totalLosses,
     totalWalls,
@@ -229,6 +275,5 @@ export function useWins(): UseWins {
     logWall,
     undoWin,
     removeGame,
-    backend,
   };
 }

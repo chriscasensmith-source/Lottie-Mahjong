@@ -44,7 +44,9 @@ export default function Home() {
     logWall,
     undoWin,
     removeGame,
-    backend,
+    status,
+    errorMsg,
+    reload,
   } = useWins();
   const { notes, setNote } = useNotes();
   const [view, setView] = useState<View>("hands");
@@ -183,11 +185,44 @@ export default function Home() {
         </div>
 
         <p className="text-xs text-emerald-100/40">
-          {backend === "supabase"
-            ? "Synced to Supabase"
-            : "Saved on this device (offline mode)"}
+          {status === "online"
+            ? "✓ Synced to Supabase"
+            : status === "loading"
+              ? "Connecting to your saved data…"
+              : status === "offline"
+                ? "Saved on this device (offline mode)"
+                : "⚠️ Not connected"}
         </p>
       </header>
+
+      {/* Connection error banner — makes clear data isn't lost, offers retry */}
+      <AnimatePresence>
+        {status === "error" && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="mx-auto mt-6 max-w-2xl rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4 text-center backdrop-blur"
+          >
+            <p className="font-semibold text-amber-100">
+              Couldn&apos;t reach your saved data — but it&apos;s not lost.
+            </p>
+            <p className="mt-1 text-sm text-amber-100/70">
+              The database didn&apos;t respond. Your games are safe in Supabase;
+              this is just a connection issue.
+            </p>
+            {errorMsg && (
+              <p className="mt-1 text-xs text-amber-100/50">({errorMsg})</p>
+            )}
+            <button
+              onClick={reload}
+              className="mt-3 rounded-full bg-amber-400 px-4 py-1.5 text-sm font-semibold text-amber-950 transition-colors hover:bg-amber-300"
+            >
+              Retry
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Body */}
       {loading ? (
