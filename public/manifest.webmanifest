@@ -1,11 +1,11 @@
 {
-  "name": "Lottie Mahjong",
-  "short_name": "Mahjong",
-  "description": "Track the American Mahjong hands you've played and won.",
+  "name": "The Mahj Journal",
+  "short_name": "Mahj Journal",
+  "description": "A journal for your American Mahjong games — hands, rounds, wins, and stats.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#072a1a",
-  "theme_color": "#0a3d26",
+  "background_color": "#F3EAD6",
+  "theme_color": "#5E1020",
   "icons": [
     {
       "src": "/icon-192.png",

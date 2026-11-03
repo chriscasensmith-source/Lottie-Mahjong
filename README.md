@@ -1,8 +1,16 @@
-# 🀄 Lottie Mahjong — Hand Tracker
+# 🀄 The Mahj Journal
 
-A little web app to track the American Mahjong (NMJL) hands you've **played**
-and **won**, with color-coded hands, point values, and the instructions printed
-beside each line. Log every win to build up your stats over time.
+A journal for your American Mahjong (NMJL) games: the full card with
+color-coded hands, point values, and instructions; **rounds of 4 games**
+(with a blanks / no blanks setting); wins logged with **jokers / no jokers**
+and **self-drawn**, plus losses and wall games; a calendar of the days you
+played; and stats.
+
+**Scoring** follows NMJL doubling: no jokers ×2 (except Singles & Pairs, which
+are always jokerless), self-drawn ×2.
+
+**Database:** apply the SQL files in `supabase/migrations/` in order
+(`0001` → `0002` → `0003`) in the Supabase SQL editor.
 
 Built with **Next.js + Tailwind CSS + Framer Motion**, with data stored in
 **Supabase**.
