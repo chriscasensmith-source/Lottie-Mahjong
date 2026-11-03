@@ -270,11 +270,13 @@ export default function Home() {
   }
 
   // ---- render ------------------------------------------------------------------
+  // Couldn't load and nothing on screen yet: don't show zeros that look like lost data.
+  const noData = status === "error" && records.length === 0;
   const saveLine =
     status === "offline"
       ? { text: "Saved on this device", tone: "muted" }
       : status === "loading"
-        ? { text: "Opening your journal…", tone: "muted" }
+        ? { text: "Connecting…", tone: "muted" }
         : saveState === "error"
           ? { text: "Couldn't save.", tone: "error" }
           : saveState === "saving"
@@ -419,6 +421,10 @@ export default function Home() {
         {/* Body */}
         {loading ? (
           <div className="mt-20 text-center font-display text-maroon-900/70">Opening your journal…</div>
+        ) : noData && view !== "hands" ? (
+          <p className="mt-10 text-center text-sm text-maroon-900/75">
+            Your {view === "stats" ? "stats" : "calendar"} will appear as soon as the journal opens.
+          </p>
         ) : view === "stats" ? (
           <StatsView records={records} rounds={rounds} removeGame={removeGame} />
         ) : view === "calendar" ? (
@@ -464,9 +470,9 @@ export default function Home() {
                 onWall={() => recordResult("wall")}
                 onRecap={() => setRecapDay(todayKey)}
               />
-              <CardChallenge progress={progress} totalWins={cardRecords.filter((r) => r.outcome === "win").length}
+              {!noData && <CardChallenge progress={progress} totalWins={cardRecords.filter((r) => r.outcome === "win").length}
                 sections={sectionStatsList}
-              />
+              />}
             </div>
 
             {/* Controls */}

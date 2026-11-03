@@ -223,6 +223,7 @@ export function useWins(): UseWins {
     const p = (async () => {
       while (outbox.current.length) {
         const op = outbox.current[0];
+        setSaveError(null); // trying again: show "Saving…" rather than the old failure
         try {
           await withTimeout(op.run(), WRITE_TIMEOUT_MS);
           outbox.current.shift();
