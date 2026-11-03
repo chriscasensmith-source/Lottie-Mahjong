@@ -11,6 +11,7 @@ import {
   outcomeTotals,
   totalPoints,
   isAlwaysJokerless,
+  gameBlanks,
 } from "@/lib/stats";
 import { OUTCOME_META } from "@/lib/outcomes";
 import { COLOR_CLASS } from "@/components/HandCard";
@@ -49,7 +50,12 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
   const wins = records.filter((r) => r.outcome === "win" && r.hand_id);
   const selfDrawn = wins.filter((r) => r.self_drawn).length;
   const jokerless = wins.filter((r) => r.jokerless && !isAlwaysJokerless(r.hand_id!)).length;
-  const blanksRounds = rounds.filter((r) => r.blanks).length;
+  const roundById = new Map(rounds.map((r) => [r.id, r]));
+  const singleGames = records.filter((r) => !r.round_id || !roundById.has(r.round_id)).length;
+  const roundsPlayed = new Set(
+    records.filter((r) => r.round_id && roundById.has(r.round_id)).map((r) => r.round_id),
+  ).size;
+  const blanksGames = records.filter((r) => gameBlanks(r, roundById)).length;
 
   if (o.total === 0) {
     return (
@@ -70,10 +76,12 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
     { label: "Points", value: points },
   ];
   const details = [
-    { label: "Rounds played", value: rounds.length },
+    { label: "Rounds played", value: roundsPlayed },
+    { label: "Single games", value: singleGames },
     { label: "Self-drawn wins", value: `${selfDrawn}/${o.win}` },
     { label: "No-joker wins", value: `${jokerless}/${o.win}` },
-    { label: "Rounds w/ blanks", value: `${blanksRounds}/${rounds.length}` },
+    { label: "Games w/ blanks", value: `${blanksGames}/${o.total}` },
+    { label: "Avg pts / win", value: o.win ? Math.round(points / o.win) : 0 },
   ];
 
   return (
@@ -125,7 +133,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         </Card>
 
         {/* Round & win details */}
-        <Card title="Rounds & wins">
+        <Card title="Rounds, games & wins">
           <div className="grid grid-cols-2 gap-2">
             {details.map((d) => (
               <div key={d.label} className="rounded-xl bg-cream-100 px-3 py-2.5 ring-1 ring-maroon-900/5">

@@ -12,9 +12,11 @@ interface GameRowProps {
   meta?: string; // e.g. section name or date, shown under the label
   showDate?: boolean;
   onRemove?: (game: GameRecord) => void;
+  // Single games: show a tappable Blanks / No blanks chip.
+  onToggleBlanks?: (game: GameRecord, blanks: boolean) => void;
 }
 
-export function GameRow({ game, index, meta, showDate, onRemove }: GameRowProps) {
+export function GameRow({ game, index, meta, showDate, onRemove, onToggleBlanks }: GameRowProps) {
   const o = OUTCOME_META[game.outcome];
   const hand = game.hand_id ? handById(game.hand_id) : null;
   const when = new Date(game.won_at);
@@ -67,6 +69,19 @@ export function GameRow({ game, index, meta, showDate, onRemove }: GameRowProps)
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        {onToggleBlanks && (
+          <button
+            onClick={() => onToggleBlanks(game, !game.blanks)}
+            title="Tap to switch blanks / no blanks"
+            className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 transition-colors ${
+              game.blanks
+                ? "bg-maroon-700 text-cream-50 ring-maroon-700"
+                : "bg-white/70 text-maroon-900/60 ring-maroon-900/15 hover:text-maroon-800"
+            }`}
+          >
+            {game.blanks ? "Blanks" : "No blanks"}
+          </button>
+        )}
         <span className="text-xs text-maroon-900/50">{time}</span>
         {onRemove && (
           <button

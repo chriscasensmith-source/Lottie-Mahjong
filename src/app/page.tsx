@@ -12,8 +12,27 @@ import { StatsView } from "@/components/StatsView";
 import { CalendarView } from "@/components/CalendarView";
 import { RoundBar } from "@/components/RoundBar";
 import { WinSheet } from "@/components/WinSheet";
-import { winPoints, GAMES_PER_ROUND } from "@/lib/stats";
-import type { GameOutcome, Hand, HandFilter, WinOptions } from "@/lib/types";
+import { winPoints, GAMES_PER_ROUND, localDayKey, roundsForDay } from "@/lib/stats";
+import type { GameOutcome, Hand, HandFilter, PlayMode, WinOptions } from "@/lib/types";
+
+// Per-device preferences (how you're playing, blanks for single games).
+const MODE_KEY = "mahj_play_mode";
+const SINGLE_BLANKS_KEY = "mahj_single_blanks";
+function readPref<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? fallback : (JSON.parse(raw) as T);
+  } catch {
+    return fallback;
+  }
+}
+function writePref(key: string, value: unknown) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* ignore */
+  }
+}
 
 type View = "hands" | "stats" | "calendar";
 
@@ -48,6 +67,7 @@ export default function Home() {
     startRound,
     setRoundBlanks,
     removeRound,
+    setGameBlanks,
     undoWin,
     removeGame,
     status,
@@ -68,6 +88,32 @@ export default function Home() {
     if (!currentRound) setPendingBlanks(defaultBlanks);
   }, [defaultBlanks, currentRound]);
 
+  // Rounds vs single games, and blanks for single games — remembered per device.
+  const [mode, setModeState] = useState<PlayMode>("rounds");
+  const [singleBlanks, setSingleBlanksState] = useState(false);
+  useEffect(() => {
+    setModeState(readPref<PlayMode>(MODE_KEY, "rounds"));
+    setSingleBlanksState(readPref<boolean>(SINGLE_BLANKS_KEY, false));
+  }, []);
+  const setMode = (m: PlayMode) => {
+    setModeState(m);
+    writePref(MODE_KEY, m);
+  };
+  const setSingleBlanks = (b: boolean) => {
+    setSingleBlanksState(b);
+    writePref(SINGLE_BLANKS_KEY, b);
+  };
+  const single = mode === "single";
+  // Logging options for the current mode.
+  const modeOpts = single
+    ? { single: true, blanks: singleBlanks }
+    : { newRoundBlanks: pendingBlanks };
+
+  const todaySingles = useMemo(
+    () => roundsForDay(localDayKey(new Date()), rounds, records).unassigned,
+    [rounds, records],
+  );
+
   const q = query.trim().toLowerCase();
 
   function showToast(label: string, undo?: () => void) {
@@ -83,9 +129,8 @@ export default function Home() {
   }
 
   function recordResult(kind: "loss" | "wall") {
-    const opts = { newRoundBlanks: pendingBlanks };
-    if (kind === "loss") logLoss(opts);
-    else logWall(opts);
+    if (kind === "loss") logLoss(modeOpts);
+    else logWall(modeOpts);
     showToast(kind === "loss" ? "Loss recorded" : "Wall game recorded", () => undoLatest(kind));
   }
 
@@ -93,10 +138,10 @@ export default function Home() {
     if (!winTarget) return;
     const { hand, at } = winTarget;
     logWin(hand.id, {
+      ...modeOpts,
       at,
       jokerless: opts.jokerless,
       selfDrawn: opts.selfDrawn,
-      newRoundBlanks: pendingBlanks,
     });
     setCelebrate((c) => ({ handId: hand.id, key: c.key + 1 }));
     const pts = winPoints(hand.id, opts).total;
@@ -104,7 +149,9 @@ export default function Home() {
     setWinTarget(null);
   }
 
-  const winRoundLabel = winTarget?.at
+  const winRoundLabel = single
+    ? `Single game · ${singleBlanks ? "Blanks" : "No blanks"}`
+    : winTarget?.at
     ? "Adds to that day's round"
     : currentRound
       ? `Round ${currentRound.number} · Game ${currentRound.games.length + 1} of ${GAMES_PER_ROUND}`
@@ -248,6 +295,11 @@ export default function Home() {
         <CalendarView
           records={records}
           rounds={rounds}
+          mode={mode}
+          onMode={setMode}
+          singleBlanks={singleBlanks}
+          onSingleBlanks={setSingleBlanks}
+          setGameBlanks={setGameBlanks}
           defaultBlanks={defaultBlanks}
           removeGame={removeGame}
           removeRound={removeRound}
@@ -261,14 +313,19 @@ export default function Home() {
         <>
           <div className="mt-5 flex flex-col items-center gap-5">
             <RoundBar
+              mode={mode}
+              onMode={setMode}
               currentRound={currentRound}
               nextRoundNumber={nextRoundNumber}
               pendingBlanks={pendingBlanks}
               onPendingBlanks={setPendingBlanks}
               onToggleBlanks={setRoundBlanks}
+              onNewRound={() => startRound({ blanks: currentRound?.round.blanks ?? pendingBlanks })}
+              singleBlanks={singleBlanks}
+              onSingleBlanks={setSingleBlanks}
+              todaySingles={todaySingles}
               onLoss={() => recordResult("loss")}
               onWall={() => recordResult("wall")}
-              onNewRound={() => startRound({ blanks: currentRound?.round.blanks ?? pendingBlanks })}
             />
             <StatsBar totalHands={ALL_HANDS.length} playedCount={playedCount} totalWins={totalWins} />
           </div>
