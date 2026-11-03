@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
 import type { GameOutcome, GameRecord, Round } from "@/lib/types";
+import { CARD_YEAR } from "@/data/hands";
 import {
   GAMES_PER_ROUND,
   localDayKey,
+  openRoundForDay,
   roundsForDay,
   type RoundView,
 } from "@/lib/stats";
@@ -16,8 +18,10 @@ const LEGACY_RECORDS_KEY = "mahjong_win_records"; // wins-only records
 const LEGACY_COUNTS_KEY = "mahjong_wins"; // oldest { handId: count } format
 
 const GAME_COLUMNS =
-  "id, hand_id, won_at, outcome, round_id, jokerless, self_drawn, blanks";
-const ROUND_COLUMNS = "id, started_at, blanks";
+  "id, hand_id, won_at, outcome, round_id, jokerless, self_drawn, blanks, details_recorded, card_year";
+const ROUND_COLUMNS = "id, started_at, blanks, closed_at";
+
+const WRITE_TIMEOUT_MS = 8000;
 
 // ---------------------------------------------------------------------------
 // localStorage (used when Supabase env vars are absent)
@@ -29,10 +33,11 @@ function readLocal(): GameRecord[] {
     const raw = window.localStorage.getItem(LOCAL_KEY);
     if (raw) return JSON.parse(raw) as GameRecord[];
 
+    // Older on-device formats never asked about jokers / self-drawn / blanks.
     const recs = window.localStorage.getItem(LEGACY_RECORDS_KEY);
     if (recs) {
       const old = JSON.parse(recs) as { id?: string; hand_id: string; won_at: string }[];
-      return old.map((r) => ({ ...r, outcome: "win" as GameOutcome }));
+      return old.map((r) => ({ ...r, outcome: "win" as GameOutcome, details_recorded: false }));
     }
 
     const counts = window.localStorage.getItem(LEGACY_COUNTS_KEY);
@@ -42,7 +47,7 @@ function readLocal(): GameRecord[] {
       const out: GameRecord[] = [];
       for (const [hand_id, count] of Object.entries(map)) {
         for (let i = 0; i < count; i++) {
-          out.push({ id: `legacy-${hand_id}-${i}`, hand_id, outcome: "win", won_at: now });
+          out.push({ id: `legacy-${hand_id}-${i}`, hand_id, outcome: "win", won_at: now, details_recorded: false });
         }
       }
       return out;
@@ -71,31 +76,71 @@ function writeLocal(key: string, value: unknown) {
   }
 }
 
-function tempId(prefix = "tmp") {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+// Ids are made on the device, so a retried save can never create a duplicate
+// and Undo always knows exactly which row to remove.
+export function newId(): string {
+  const c: Crypto | undefined = typeof crypto !== "undefined" ? crypto : undefined;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  const b = new Uint8Array(16);
+  if (c) c.getRandomValues(b);
+  else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-// Race a promise against a timeout so a cold-started database can't hang the UI.
-function withTimeout<T>(p: PromiseLike<T>, ms: number) {
-  const timeout = new Promise<{ timedOut: true }>((resolve) =>
-    setTimeout(() => resolve({ timedOut: true }), ms),
-  );
-  return Promise.race([p, timeout]);
+function withTimeout<T>(p: PromiseLike<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new TransientError("timed out")), ms);
+    Promise.resolve(p).then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
+// A save that may work if tried again (network, timeout, sleeping database).
+class TransientError extends Error {}
+// A save the database refused for good (e.g. a round that's already full).
+class RejectedError extends Error {}
+
+type PgError = { code?: string; message: string } | null;
+
+// Turn a Supabase response into success / retry / rejected.
+function check(error: PgError, opts: { duplicateOk?: boolean } = {}) {
+  if (!error) return;
+  if (opts.duplicateOk && error.code === "23505") return; // already saved
+  // Postgres SQLSTATE codes are 5 chars; anything else is the network/API layer.
+  if (error.code && /^[0-9A-Z]{5}$/.test(error.code) && !error.code.startsWith("08")) {
+    throw new RejectedError(error.message);
+  }
+  throw new TransientError(error.message);
 }
 
 // ---------------------------------------------------------------------------
 
-// "loading" — first fetch in flight · "online" — showing live database data
-// "offline" — no database configured · "error" — database unreachable (data NOT lost)
+// "loading" — first fetch in flight · "online" — showing saved data
+// "offline" — no database configured (device only) · "error" — couldn't load
 export type SyncStatus = "loading" | "online" | "offline" | "error";
+// What the save line says.
+export type SaveState = "saved" | "saving" | "error";
 
 export interface LogOptions {
   at?: Date; // backdate the game (defaults to now)
   jokerless?: boolean;
   selfDrawn?: boolean;
-  newRoundBlanks?: boolean; // blanks setting if this game has to start a new round
   single?: boolean; // log as a single game (no round)
   blanks?: boolean; // blanks setting for a single game
+  roundId?: string; // add to this specific round (calendar)
+  newRound?: boolean; // always start a fresh round with this game
+  newRoundBlanks?: boolean; // blanks setting if this game starts a new round
 }
 
 export interface UseWins {
@@ -104,41 +149,47 @@ export interface UseWins {
   counts: Record<string, number>;
   loading: boolean;
   status: SyncStatus;
+  saveState: SaveState;
   errorMsg: string | null;
   reload: () => void;
-  totalWins: number;
-  totalLosses: number;
-  totalWalls: number;
-  totalGames: number;
-  playedCount: number;
+  retrySaves: () => void;
+  clearError: () => void;
+  /** Today's latest round (open, complete or ended), if any. */
+  todayRound: RoundView | null;
   /** Today's round that the next game will go into (null = next game starts a new one). */
   currentRound: RoundView | null;
   /** The number the next round today will have. */
   nextRoundNumber: number;
   /** Blanks setting a new round will start with. */
   defaultBlanks: boolean;
-  logWin: (handId: string, opts?: LogOptions) => Promise<void>;
-  logLoss: (opts?: LogOptions) => Promise<void>;
-  logWall: (opts?: LogOptions) => Promise<void>;
-  startRound: (opts?: { at?: Date; blanks?: boolean }) => Promise<void>;
-  setRoundBlanks: (roundId: string, blanks: boolean) => Promise<void>;
-  removeRound: (roundId: string) => Promise<void>;
-  setGameBlanks: (record: GameRecord, blanks: boolean) => Promise<void>;
-  undoWin: (handId: string) => Promise<void>;
-  removeGame: (record: GameRecord) => Promise<void>;
+  logWin: (handId: string, opts?: LogOptions) => GameRecord | null;
+  logLoss: (opts?: LogOptions) => GameRecord | null;
+  logWall: (opts?: LogOptions) => GameRecord | null;
+  setRoundBlanks: (roundId: string, blanks: boolean) => void;
+  endRound: (roundId: string) => void;
+  removeRound: (roundId: string) => void;
+  setGameBlanks: (record: GameRecord, blanks: boolean) => void;
+  undoWin: (handId: string) => void;
+  removeGame: (record: GameRecord) => void;
+}
+
+interface Op {
+  run: () => Promise<void>;
+  revert: () => void; // undo the local change if the database refuses it
+  label: string;
 }
 
 export function useWins(): UseWins {
   const [records, setRecords] = useState<GameRecord[]>([]);
   const [rounds, setRounds] = useState<Round[]>([]);
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState<SyncStatus>(
-    isSupabaseConfigured ? "loading" : "offline",
-  );
+  const [status, setStatus] = useState<SyncStatus>(isSupabaseConfigured ? "loading" : "offline");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [pending, setPending] = useState(0);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Refs are the source of truth for logic (always current, even mid-sequence);
-  // state mirrors them for rendering.
+  // Refs are the source of truth for logic (always current, even between
+  // renders, so rapid taps see each other); state mirrors them for rendering.
   const recordsRef = useRef<GameRecord[]>([]);
   const roundsRef = useRef<Round[]>([]);
 
@@ -154,18 +205,58 @@ export function useWins(): UseWins {
     if (!isSupabaseConfigured) writeLocal(ROUNDS_KEY, next);
   }, []);
 
-  const fail = useCallback((msg: string) => {
-    setStatus("error");
-    setErrorMsg(msg);
+  // ---- outbox ----------------------------------------------------------------
+  // Every change shows up on screen immediately, then is saved in order.
+  // A failed save stays in the outbox and is retried (on Retry, on the next
+  // change, or when the app regains focus), so nothing tapped is ever lost.
+
+  const outbox = useRef<Op[]>([]);
+  const flushing = useRef<Promise<void> | null>(null);
+
+  const flush = useCallback((): Promise<void> => {
+    if (!supabase) {
+      outbox.current = [];
+      setPending(0);
+      return Promise.resolve();
+    }
+    if (flushing.current) return flushing.current;
+    const p = (async () => {
+      while (outbox.current.length) {
+        const op = outbox.current[0];
+        setSaveError(null); // trying again: show "Saving…" rather than the old failure
+        try {
+          await withTimeout(op.run(), WRITE_TIMEOUT_MS);
+          outbox.current.shift();
+          setPending(outbox.current.length);
+          setSaveError(null);
+        } catch (e) {
+          if (e instanceof RejectedError) {
+            outbox.current.shift();
+            setPending(outbox.current.length);
+            op.revert();
+            setSaveError(`${op.label}: ${e.message}`);
+            continue;
+          }
+          setSaveError((e as Error)?.message || "Couldn't reach the database");
+          return;
+        }
+      }
+    })().finally(() => {
+      flushing.current = null;
+    });
+    flushing.current = p;
+    return p;
   }, []);
 
-  // Serialize writes so rapid taps can't both land in a "3 of 4" round.
-  const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const enqueue = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
-    const run = queue.current.then(task, task);
-    queue.current = run.catch(() => undefined);
-    return run;
-  }, []);
+  const enqueue = useCallback(
+    (op: Op) => {
+      if (!supabase) return;
+      outbox.current.push(op);
+      setPending(outbox.current.length);
+      void flush();
+    },
+    [flush],
+  );
 
   // ---- load -----------------------------------------------------------------
 
@@ -177,8 +268,15 @@ export function useWins(): UseWins {
       setLoading(false);
       return;
     }
+    // Send unsaved changes first so a fresh load can't hide them.
+    if (outbox.current.length) {
+      await flush();
+      if (outbox.current.length) {
+        setLoading(false);
+        return; // still offline; keep what's on screen
+      }
+    }
     setStatus((s) => (s === "online" ? "online" : "loading"));
-    setErrorMsg(null);
 
     const fetchBoth = () =>
       withTimeout(
@@ -186,220 +284,238 @@ export function useWins(): UseWins {
           supabase!.from("mahjong_wins").select(GAME_COLUMNS).order("won_at", { ascending: true }),
           supabase!.from("mahjong_rounds").select(ROUND_COLUMNS).order("started_at", { ascending: true }),
         ]),
-        8000,
+        WRITE_TIMEOUT_MS,
       );
 
-    let result = await fetchBoth();
-    if ("timedOut" in result) result = await fetchBoth(); // cold-start retry
+    let result: Awaited<ReturnType<typeof fetchBoth>> | null = null;
+    for (let attempt = 0; attempt < 2 && !result; attempt++) {
+      try {
+        result = await fetchBoth();
+      } catch {
+        /* timed out — the database may be waking up; try once more */
+      }
+    }
 
-    if ("timedOut" in result) {
-      fail("The database didn't respond in time (it may be waking up). Your data is safe — tap Retry.");
+    if (!result) {
+      setStatus("error");
+      setErrorMsg("The journal didn't answer in time. It may be waking up.");
       setLoading(false);
       return;
     }
     const [games, rnds] = result;
     if (games.error || rnds.error) {
-      fail((games.error ?? rnds.error)!.message);
+      setStatus("error");
+      setErrorMsg((games.error ?? rnds.error)!.message);
       setLoading(false);
       return;
     }
-    // Keep any optimistic games whose save is still in flight.
-    const pending = recordsRef.current.filter((r) => r.id?.startsWith("tmp-"));
-    commitRecords([...((games.data ?? []) as GameRecord[]), ...pending]);
+    if (outbox.current.length) {
+      setLoading(false);
+      return; // a change arrived mid-fetch; keep local until it's saved
+    }
+    commitRecords((games.data ?? []) as GameRecord[]);
     commitRounds((rnds.data ?? []) as Round[]);
     setStatus("online");
     setErrorMsg(null);
     setLoading(false);
-  }, [commitRecords, commitRounds, fail]);
+  }, [commitRecords, commitRounds, flush]);
 
   useEffect(() => {
-    reload();
+    void reload();
   }, [reload]);
 
   // Re-fetch when the app regains focus (e.g. reopening it later).
   useEffect(() => {
     if (!supabase) return;
     const onFocus = () => {
-      if (document.visibilityState !== "hidden") reload();
+      if (document.visibilityState !== "hidden") void reload();
     };
     window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onFocus);
     document.addEventListener("visibilitychange", onFocus);
     return () => {
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
   }, [reload]);
 
+  const retrySaves = useCallback(() => {
+    void flush().then(() => {
+      if (!outbox.current.length) void reload();
+    });
+  }, [flush, reload]);
+
   // ---- rounds -----------------------------------------------------------------
 
   const lastBlanks = () => {
-    const latest = [...roundsRef.current].sort((a, b) =>
-      a.started_at < b.started_at ? 1 : -1,
-    )[0];
+    const latest = [...roundsRef.current].sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0];
     return latest?.blanks ?? false;
   };
 
-  // The round on `dayKey` that still has room, if any.
-  const openRoundForDay = (dayKey: string): Round | null => {
-    const day = roundsRef.current
-      .filter((r) => localDayKey(new Date(r.started_at)) === dayKey)
-      .sort((a, b) => (a.started_at < b.started_at ? -1 : 1));
-    const latest = day[day.length - 1];
-    if (!latest) return null;
-    const count = recordsRef.current.filter((g) => g.round_id === latest.id).length;
-    return count < GAMES_PER_ROUND ? latest : null;
+  const createRound = (at: Date, blanks: boolean): Round => {
+    const round: Round = { id: newId(), started_at: at.toISOString(), blanks, closed_at: null };
+    commitRounds([...roundsRef.current, round]);
+    enqueue({
+      label: "Couldn't start a round",
+      run: async () => {
+        const { error } = await supabase!
+          .from("mahjong_rounds")
+          .insert({ id: round.id, started_at: round.started_at, blanks: round.blanks });
+        check(error, { duplicateOk: true });
+      },
+      revert: () => commitRounds(roundsRef.current.filter((r) => r.id !== round.id)),
+    });
+    return round;
   };
 
-  const createRound = async (at: Date, blanks: boolean): Promise<string> => {
-    const started_at = at.toISOString();
-    if (!supabase) {
-      const round: Round = { id: tempId("round"), started_at, blanks };
-      commitRounds([...roundsRef.current, round]);
-      return round.id;
-    }
-    const { data, error } = await supabase
-      .from("mahjong_rounds")
-      .insert({ started_at, blanks })
-      .select(ROUND_COLUMNS)
-      .single();
-    if (error || !data) {
-      fail(`Couldn't start a round: ${error?.message ?? "unknown error"}`);
-      throw error ?? new Error("round insert failed");
-    }
-    commitRounds([...roundsRef.current, data as Round]);
-    return (data as Round).id;
-  };
-
-  const startRound = useCallback(
-    (opts?: { at?: Date; blanks?: boolean }) =>
-      enqueue(async () => {
-        await createRound(opts?.at ?? new Date(), opts?.blanks ?? lastBlanks());
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enqueue],
+  const patchRound = useCallback(
+    (roundId: string, patch: Partial<Round>, label: string) => {
+      const before = roundsRef.current.find((r) => r.id === roundId);
+      if (!before) return;
+      commitRounds(roundsRef.current.map((r) => (r.id === roundId ? { ...r, ...patch } : r)));
+      enqueue({
+        label,
+        run: async () => {
+          const { error } = await supabase!.from("mahjong_rounds").update(patch).eq("id", roundId);
+          check(error);
+        },
+        revert: () => commitRounds(roundsRef.current.map((r) => (r.id === roundId ? before : r))),
+      });
+    },
+    [commitRounds, enqueue],
   );
 
   const setRoundBlanks = useCallback(
-    async (roundId: string, blanks: boolean) => {
-      commitRounds(roundsRef.current.map((r) => (r.id === roundId ? { ...r, blanks } : r)));
-      if (supabase) {
-        const { error } = await supabase.from("mahjong_rounds").update({ blanks }).eq("id", roundId);
-        if (error) fail(`Couldn't update the round: ${error.message}`);
-      }
-    },
-    [commitRounds, fail],
+    (roundId: string, blanks: boolean) => patchRound(roundId, { blanks }, "Couldn't update the round"),
+    [patchRound],
   );
 
   // Only empty rounds can be removed (so no games are ever orphaned by accident).
   const removeRound = useCallback(
-    async (roundId: string) => {
+    (roundId: string) => {
       if (recordsRef.current.some((g) => g.round_id === roundId)) return;
+      const before = roundsRef.current.find((r) => r.id === roundId);
+      if (!before) return;
       commitRounds(roundsRef.current.filter((r) => r.id !== roundId));
-      if (supabase) {
-        const { error } = await supabase.from("mahjong_rounds").delete().eq("id", roundId);
-        if (error) fail(`Couldn't remove the round: ${error.message}`);
-      }
+      enqueue({
+        label: "Couldn't remove the round",
+        run: async () => {
+          const { error } = await supabase!.from("mahjong_rounds").delete().eq("id", roundId);
+          check(error);
+        },
+        revert: () => commitRounds([...roundsRef.current, before]),
+      });
     },
-    [commitRounds, fail],
+    [commitRounds, enqueue],
+  );
+
+  // End a round before its 4th game. It stays as an incomplete round; an
+  // empty round is simply removed so no blank rounds pile up.
+  const endRound = useCallback(
+    (roundId: string) => {
+      if (!recordsRef.current.some((g) => g.round_id === roundId)) return removeRound(roundId);
+      patchRound(roundId, { closed_at: new Date().toISOString() }, "Couldn't end the round");
+    },
+    [patchRound, removeRound],
   );
 
   // ---- games ------------------------------------------------------------------
 
+  // Decide the round synchronously from local state, show the game at once,
+  // then save. Returns the new record (its id is final) or null if refused.
   const addGame = useCallback(
-    (outcome: GameOutcome, handId: string | null, opts: LogOptions = {}) =>
-      enqueue(async () => {
-        const at = opts.at ?? new Date();
-        const won_at = at.toISOString();
+    (outcome: GameOutcome, handId: string | null, opts: LogOptions = {}): GameRecord | null => {
+      const at = opts.at ?? new Date();
+      let round_id: string | null = null;
 
-        let round_id: string | null = null;
-        if (!opts.single) {
-          try {
-            round_id =
-              openRoundForDay(localDayKey(at))?.id ??
-              (await createRound(at, opts.newRoundBlanks ?? lastBlanks()));
-          } catch {
-            return; // createRound already surfaced the error
-          }
+      if (opts.roundId) {
+        const count = recordsRef.current.filter((g) => g.round_id === opts.roundId).length;
+        const round = roundsRef.current.find((r) => r.id === opts.roundId);
+        if (!round || count >= GAMES_PER_ROUND) {
+          setSaveError("That round already has 4 games.");
+          return null;
         }
+        round_id = round.id;
+      } else if (!opts.single) {
+        const open = opts.newRound
+          ? null
+          : openRoundForDay(localDayKey(at), roundsRef.current, recordsRef.current);
+        round_id = open?.round.id ?? createRound(at, opts.newRoundBlanks ?? lastBlanks()).id;
+      }
 
-        const row = {
-          hand_id: handId,
-          outcome,
-          won_at,
-          round_id,
-          jokerless: outcome === "win" ? !!opts.jokerless : false,
-          self_drawn: outcome === "win" ? !!opts.selfDrawn : false,
-          blanks: opts.single ? !!opts.blanks : false,
-        };
-        const optimistic: GameRecord = { id: tempId(), ...row };
-        commitRecords([...recordsRef.current, optimistic]);
-
-        if (supabase) {
-          const { data, error } = await supabase
-            .from("mahjong_wins")
-            .insert(row)
-            .select(GAME_COLUMNS)
-            .single();
-          if (error) {
-            commitRecords(recordsRef.current.filter((r) => r.id !== optimistic.id));
-            fail(`Couldn't save that game: ${error.message}`);
-          } else if (data) {
-            commitRecords(
-              recordsRef.current.map((r) => (r.id === optimistic.id ? (data as GameRecord) : r)),
-            );
-            setStatus("online");
-            setErrorMsg(null);
-          }
-        }
-      }),
+      const record: GameRecord = {
+        id: newId(),
+        hand_id: handId,
+        outcome,
+        won_at: at.toISOString(),
+        round_id,
+        jokerless: outcome === "win" ? !!opts.jokerless : false,
+        self_drawn: outcome === "win" ? !!opts.selfDrawn : false,
+        blanks: round_id ? false : !!opts.blanks,
+        details_recorded: true,
+        card_year: CARD_YEAR,
+      };
+      commitRecords([...recordsRef.current, record]);
+      enqueue({
+        label: "Couldn't save that game",
+        run: async () => {
+          const { error } = await supabase!.from("mahjong_wins").insert(record);
+          check(error, { duplicateOk: true });
+        },
+        revert: () => commitRecords(recordsRef.current.filter((r) => r.id !== record.id)),
+      });
+      return record;
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enqueue, commitRecords, fail],
+    [commitRecords, enqueue],
   );
 
-  const logWin = useCallback(
-    (handId: string, opts?: LogOptions) => addGame("win", handId, opts),
-    [addGame],
-  );
+  const logWin = useCallback((handId: string, opts?: LogOptions) => addGame("win", handId, opts), [addGame]);
   const logLoss = useCallback((opts?: LogOptions) => addGame("loss", null, opts), [addGame]);
   const logWall = useCallback((opts?: LogOptions) => addGame("wall", null, opts), [addGame]);
 
   const removeGame = useCallback(
-    async (record: GameRecord) => {
-      commitRecords(
-        recordsRef.current.filter((r) => (record.id ? r.id !== record.id : r !== record)),
-      );
-      if (supabase && record.id && !record.id.startsWith("tmp-")) {
-        const { error } = await supabase.from("mahjong_wins").delete().eq("id", record.id);
-        if (error) fail(`Couldn't remove that game: ${error.message}`);
-      }
+    (record: GameRecord) => {
+      const target = recordsRef.current.find((r) => (record.id ? r.id === record.id : r === record));
+      if (!target) return;
+      commitRecords(recordsRef.current.filter((r) => r !== target));
+      if (!target.id || target.id.startsWith("legacy-")) return;
+      enqueue({
+        label: "Couldn't remove that game",
+        run: async () => {
+          const { error } = await supabase!.from("mahjong_wins").delete().eq("id", target.id!);
+          check(error);
+        },
+        revert: () => commitRecords([...recordsRef.current, target]),
+      });
     },
-    [commitRecords, fail],
+    [commitRecords, enqueue],
   );
 
   const setGameBlanks = useCallback(
-    async (record: GameRecord, blanks: boolean) => {
-      commitRecords(
-        recordsRef.current.map((r) => (r.id === record.id ? { ...r, blanks } : r)),
-      );
-      if (supabase && record.id && !record.id.startsWith("tmp-")) {
-        const { error } = await supabase
-          .from("mahjong_wins")
-          .update({ blanks })
-          .eq("id", record.id);
-        if (error) fail(`Couldn't update that game: ${error.message}`);
-      }
+    (record: GameRecord, blanks: boolean) => {
+      const before = recordsRef.current.find((r) => r.id === record.id);
+      if (!before || !before.id) return;
+      commitRecords(recordsRef.current.map((r) => (r.id === before.id ? { ...r, blanks } : r)));
+      enqueue({
+        label: "Couldn't update that game",
+        run: async () => {
+          const { error } = await supabase!.from("mahjong_wins").update({ blanks }).eq("id", before.id!);
+          check(error);
+        },
+        revert: () => commitRecords(recordsRef.current.map((r) => (r.id === before.id ? before : r))),
+      });
     },
-    [commitRecords, fail],
+    [commitRecords, enqueue],
   );
 
+  // Remove the most recent win on a hand.
   const undoWin = useCallback(
-    async (handId: string) => {
-      const winsForHand = recordsRef.current.filter(
-        (r) => r.hand_id === handId && r.outcome === "win",
-      );
+    (handId: string) => {
+      const winsForHand = recordsRef.current.filter((r) => r.hand_id === handId && r.outcome === "win");
       if (winsForHand.length === 0) return;
-      const target = winsForHand.reduce((a, b) => (a.won_at >= b.won_at ? a : b));
-      await removeGame(target);
+      removeGame(winsForHand.reduce((a, b) => (a.won_at >= b.won_at ? a : b)));
     },
     [removeGame],
   );
@@ -415,18 +531,16 @@ export function useWins(): UseWins {
   }, [records]);
 
   const todayKey = localDayKey(new Date());
-  const today = useMemo(
-    () => roundsForDay(todayKey, rounds, records),
-    [todayKey, rounds, records],
-  );
-  const lastToday = today.rounds[today.rounds.length - 1];
-  const currentRound =
-    lastToday && lastToday.games.length < GAMES_PER_ROUND ? lastToday : null;
+  const today = useMemo(() => roundsForDay(todayKey, rounds, records), [todayKey, rounds, records]);
+  const todayRound = today.rounds[today.rounds.length - 1] ?? null;
+  const currentRound = todayRound && todayRound.status === "open" ? todayRound : null;
   const nextRoundNumber = currentRound ? currentRound.number : today.rounds.length + 1;
   const defaultBlanks = useMemo(() => {
     const latest = [...rounds].sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0];
     return latest?.blanks ?? false;
   }, [rounds]);
+
+  const saveState: SaveState = saveError && pending > 0 ? "error" : pending > 0 ? "saving" : "saved";
 
   return {
     records,
@@ -434,21 +548,20 @@ export function useWins(): UseWins {
     counts,
     loading,
     status,
-    errorMsg,
+    saveState,
+    errorMsg: saveError ?? errorMsg,
     reload,
-    totalWins: records.filter((r) => r.outcome === "win").length,
-    totalLosses: records.filter((r) => r.outcome === "loss").length,
-    totalWalls: records.filter((r) => r.outcome === "wall").length,
-    totalGames: records.length,
-    playedCount: Object.keys(counts).length,
+    retrySaves,
+    clearError: () => setSaveError(null),
+    todayRound,
     currentRound,
     nextRoundNumber,
     defaultBlanks,
     logWin,
     logLoss,
     logWall,
-    startRound,
     setRoundBlanks,
+    endRound,
     removeRound,
     setGameBlanks,
     undoWin,

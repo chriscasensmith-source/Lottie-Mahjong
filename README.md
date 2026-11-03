@@ -10,7 +10,9 @@ played; and stats.
 are always jokerless), self-drawn ×2.
 
 **Database:** apply the SQL files in `supabase/migrations/` in order
-(`0001` → `0002` → `0003`) in the Supabase SQL editor.
+(`0001` → `0005`) in the Supabase SQL editor.
+
+**Tests:** `npm test` runs the stats and round-rule tests (Node's built-in runner, no extra packages).
 
 Built with **Next.js + Tailwind CSS + Framer Motion**, with data stored in
 **Supabase**.
@@ -71,17 +73,44 @@ Keep `id` stable once a hand has wins logged against it, so history is preserved
 
 ## Data model
 
-A single table, `public.mahjong_wins`:
+Two tables (migrations `0001`–`0005` in `supabase/migrations/`, all applied):
 
-| column   | type        | notes                          |
-| -------- | ----------- | ------------------------------ |
-| id       | uuid        | primary key                    |
-| hand_id  | text        | matches a hand `id` in code    |
-| won_at   | timestamptz | defaults to now()              |
-| note     | text        | optional                       |
+**`mahjong_wins`**: one row per game (the name is historical).
 
-A hand counts as "played" when it has at least one win. The SQL lives in
-`supabase/migrations/0001_mahjong_create_wins.sql`.
+| column           | notes                                                                 |
+| ---------------- | --------------------------------------------------------------------- |
+| id               | uuid, made on the device so retries and Undo hit the exact row         |
+| hand_id          | the hand for wins; null for losses and wall games                      |
+| outcome          | `win`, `loss` or `wall`                                                |
+| won_at           | when the game was played                                               |
+| round_id         | the round it belongs to; null for single games and all older games     |
+| jokerless, self_drawn, blanks | only meaningful when `details_recorded` is true           |
+| details_recorded | false for games logged before Nov 3, 2026 (those details were never asked) |
+| card_year        | the NMJL card used (2026)                                              |
+
+**`mahjong_rounds`**: `id`, `started_at`, `blanks`, `closed_at` (set when a round
+is ended early). A database trigger stops any round from holding more than 4 games.
+
+## How the stats are defined
+
+All of these live in `src/lib/stats.ts` and are covered by `npm test`.
+
+| Metric | Definition |
+| --- | --- |
+| Total games | wins + losses + wall games |
+| Overall win rate | wins ÷ total games |
+| Decisive-game win rate | wins ÷ (wins + losses) |
+| Wall-game rate | wall games ÷ total games |
+| Recent decisive win rate | wins among the latest 50 decided games ÷ that sample (or fewer, labeled) |
+| Unique hands won | distinct hands on the card with at least one win |
+| Card / section completion | unique hands won ÷ hands on the card / in the section |
+| Section wins | every win on a hand in that section, repeats included |
+| Completed round | a tracked round with exactly 4 games |
+| Avg wins per completed round | wins in completed rounds ÷ completed rounds |
+| Hand points | sum of winning-hand values with NMJL doubling; older wins count at base value |
+
+Rates show "—" when there's nothing to divide by. Self-drawn, no-joker and blanks
+percentages only count games where the question was actually asked.
 
 ## Deploying
 

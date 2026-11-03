@@ -48,6 +48,11 @@ export interface GameRecord {
   blanks?: boolean; // single games only — round games use the round's setting
   jokerless?: boolean; // won without jokers ("No jokers")
   self_drawn?: boolean; // drew your own Mahjong tile
+  // Were jokers / self-drawn / blanks actually captured for this game?
+  // false for games logged before those questions existed (their stored
+  // values are column defaults, not answers). Missing = treat as recorded.
+  details_recorded?: boolean;
+  card_year?: number; // which NMJL card this game was played with
 }
 
 // A round: up to 4 games played together, with a blanks house-rule flag.
@@ -55,6 +60,7 @@ export interface Round {
   id: string;
   started_at: string; // ISO timestamp
   blanks: boolean;
+  closed_at?: string | null; // set when the round was ended before 4 games
 }
 
 // How games are being played: grouped into rounds of 4, or one at a time.
@@ -66,4 +72,7 @@ export interface WinOptions {
   selfDrawn: boolean;
 }
 
-export type HandFilter = "all" | "played" | "unplayed";
+export type HandFilter = "all" | "won" | "unwon" | "favorites" | "recent";
+
+// Yes / no / never asked. Used for optional details on older games.
+export type Tracked = boolean | null;

@@ -26,12 +26,20 @@ const config: Config = {
           800: "#4A0C19",
           900: "#340811",
         },
+        // Gold accent (won hands, milestones). `dark` passes AA as text on cream.
+        gold: {
+          DEFAULT: "#C2A25A",
+          light: "#EADBB4",
+          dark: "#86682A",
+        },
         // Game-outcome status colors (always paired with an icon + label).
+        // Checked with the dataviz palette validator on cream: CVD ΔE ≥ 12,
+        // normal-vision ΔE ≥ 15, all ≥ 3:1 contrast. Loss is gray on purpose.
         outcome: {
-          win: "#3F7D4E",
+          win: "#2E7D4F",
           "win-soft": "#E3EFE2",
           "win-ink": "#2C5E38",
-          loss: "#6B6E80",
+          loss: "#8A8DA0",
           "loss-soft": "#E8E7EE",
           "loss-ink": "#45485A",
           wall: "#B7811F",
