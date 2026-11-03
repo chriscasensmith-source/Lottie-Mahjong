@@ -15,7 +15,8 @@ const ROUNDS_KEY = "mahjong_rounds";
 const LEGACY_RECORDS_KEY = "mahjong_win_records"; // wins-only records
 const LEGACY_COUNTS_KEY = "mahjong_wins"; // oldest { handId: count } format
 
-const GAME_COLUMNS = "id, hand_id, won_at, outcome, round_id, jokerless, self_drawn";
+const GAME_COLUMNS =
+  "id, hand_id, won_at, outcome, round_id, jokerless, self_drawn, blanks";
 const ROUND_COLUMNS = "id, started_at, blanks";
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,8 @@ export interface LogOptions {
   jokerless?: boolean;
   selfDrawn?: boolean;
   newRoundBlanks?: boolean; // blanks setting if this game has to start a new round
+  single?: boolean; // log as a single game (no round)
+  blanks?: boolean; // blanks setting for a single game
 }
 
 export interface UseWins {
@@ -120,6 +123,7 @@ export interface UseWins {
   startRound: (opts?: { at?: Date; blanks?: boolean }) => Promise<void>;
   setRoundBlanks: (roundId: string, blanks: boolean) => Promise<void>;
   removeRound: (roundId: string) => Promise<void>;
+  setGameBlanks: (record: GameRecord, blanks: boolean) => Promise<void>;
   undoWin: (handId: string) => Promise<void>;
   removeGame: (record: GameRecord) => Promise<void>;
 }
@@ -307,13 +311,15 @@ export function useWins(): UseWins {
         const at = opts.at ?? new Date();
         const won_at = at.toISOString();
 
-        let round_id: string;
-        try {
-          round_id =
-            openRoundForDay(localDayKey(at))?.id ??
-            (await createRound(at, opts.newRoundBlanks ?? lastBlanks()));
-        } catch {
-          return; // createRound already surfaced the error
+        let round_id: string | null = null;
+        if (!opts.single) {
+          try {
+            round_id =
+              openRoundForDay(localDayKey(at))?.id ??
+              (await createRound(at, opts.newRoundBlanks ?? lastBlanks()));
+          } catch {
+            return; // createRound already surfaced the error
+          }
         }
 
         const row = {
@@ -323,6 +329,7 @@ export function useWins(): UseWins {
           round_id,
           jokerless: outcome === "win" ? !!opts.jokerless : false,
           self_drawn: outcome === "win" ? !!opts.selfDrawn : false,
+          blanks: opts.single ? !!opts.blanks : false,
         };
         const optimistic: GameRecord = { id: tempId(), ...row };
         commitRecords([...recordsRef.current, optimistic]);
@@ -364,6 +371,22 @@ export function useWins(): UseWins {
       if (supabase && record.id && !record.id.startsWith("tmp-")) {
         const { error } = await supabase.from("mahjong_wins").delete().eq("id", record.id);
         if (error) fail(`Couldn't remove that game: ${error.message}`);
+      }
+    },
+    [commitRecords, fail],
+  );
+
+  const setGameBlanks = useCallback(
+    async (record: GameRecord, blanks: boolean) => {
+      commitRecords(
+        recordsRef.current.map((r) => (r.id === record.id ? { ...r, blanks } : r)),
+      );
+      if (supabase && record.id && !record.id.startsWith("tmp-")) {
+        const { error } = await supabase
+          .from("mahjong_wins")
+          .update({ blanks })
+          .eq("id", record.id);
+        if (error) fail(`Couldn't update that game: ${error.message}`);
       }
     },
     [commitRecords, fail],
@@ -427,6 +450,7 @@ export function useWins(): UseWins {
     startRound,
     setRoundBlanks,
     removeRound,
+    setGameBlanks,
     undoWin,
     removeGame,
   };

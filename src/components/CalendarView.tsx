@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { GameRecord, Hand, Round } from "@/lib/types";
+import type { GameRecord, Hand, PlayMode, Round } from "@/lib/types";
 import {
   GAMES_PER_ROUND,
   gamePoints,
@@ -30,6 +30,11 @@ function cellTier(count: number): string {
 interface CalendarViewProps {
   records: GameRecord[];
   rounds: Round[];
+  mode: PlayMode;
+  onMode: (m: PlayMode) => void;
+  singleBlanks: boolean;
+  onSingleBlanks: (b: boolean) => void;
+  setGameBlanks: (record: GameRecord, blanks: boolean) => void;
   defaultBlanks: boolean;
   removeGame: (record: GameRecord) => void;
   removeRound: (roundId: string) => void;
@@ -43,6 +48,11 @@ interface CalendarViewProps {
 export function CalendarView({
   records,
   rounds,
+  mode,
+  onMode,
+  singleBlanks,
+  onSingleBlanks,
+  setGameBlanks,
   defaultBlanks,
   removeGame,
   removeRound,
@@ -103,9 +113,16 @@ export function CalendarView({
     return new Date(sy, sm - 1, sd, now.getHours(), now.getMinutes(), now.getSeconds());
   }
 
+  // Options for a loss/wall added to this day, following the current mode.
+  function addOpts(): LogOptions {
+    return mode === "single"
+      ? { at: atDate(), single: true, blanks: singleBlanks }
+      : { at: atDate(), newRoundBlanks: defaultBlanks };
+  }
+
   const count = (o: GameRecord["outcome"]) => dayGames.filter((g) => g.outcome === o).length;
   const dayTiles = [
-    { label: "Rounds", value: day.rounds.length },
+    { label: "Games", value: dayGames.length },
     { label: "Wins", value: count("win") },
     { label: "Losses", value: count("loss") },
     { label: "Walls", value: count("wall") },
@@ -200,9 +217,35 @@ export function CalendarView({
           <p className="mt-3 text-sm text-maroon-900/45">Can&apos;t add games to a future day.</p>
         ) : (
           <div className="mt-3 rounded-2xl bg-cream-100 p-3 ring-1 ring-maroon-900/10">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-maroon-900/55">
-              Add a game to this day
-            </p>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-maroon-900/55">
+                Add a game to this day
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Segmented
+                  size="sm"
+                  label="Add as"
+                  value={mode}
+                  onChange={onMode}
+                  options={[
+                    { value: "rounds" as PlayMode, label: "Rounds" },
+                    { value: "single" as PlayMode, label: "Single game" },
+                  ]}
+                />
+                {mode === "single" && (
+                  <Segmented
+                    size="sm"
+                    label="Blanks for this game"
+                    value={singleBlanks}
+                    onChange={onSingleBlanks}
+                    options={[
+                      { value: false, label: "No blanks" },
+                      { value: true, label: "Blanks" },
+                    ]}
+                  />
+                )}
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value=""
@@ -226,23 +269,25 @@ export function CalendarView({
                 ))}
               </select>
               <button
-                onClick={() => logLoss({ at: atDate(), newRoundBlanks: defaultBlanks })}
+                onClick={() => logLoss(addOpts())}
                 className="rounded-lg bg-outcome-loss-soft px-3 py-2 text-sm font-semibold text-outcome-loss-ink ring-1 ring-outcome-loss/30 hover:bg-outcome-loss/20"
               >
                 + Loss
               </button>
               <button
-                onClick={() => logWall({ at: atDate(), newRoundBlanks: defaultBlanks })}
+                onClick={() => logWall(addOpts())}
                 className="rounded-lg bg-outcome-wall-soft px-3 py-2 text-sm font-semibold text-outcome-wall-ink ring-1 ring-outcome-wall/30 hover:bg-outcome-wall/20"
               >
                 + Wall
               </button>
-              <button
-                onClick={() => startRound({ at: atDate(), blanks: defaultBlanks })}
-                className="rounded-lg px-3 py-2 text-sm font-semibold text-maroon-700 ring-1 ring-maroon-300 hover:bg-maroon-50"
-              >
-                + New round
-              </button>
+              {mode === "rounds" && (
+                <button
+                  onClick={() => startRound({ at: atDate(), blanks: defaultBlanks })}
+                  className="rounded-lg px-3 py-2 text-sm font-semibold text-maroon-700 ring-1 ring-maroon-300 hover:bg-maroon-50"
+                >
+                  + New round
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -333,16 +378,21 @@ export function CalendarView({
               })}
             </ul>
 
-            {/* Games logged before rounds existed */}
+            {/* Single games (played outside a round) */}
             {day.unassigned.length > 0 && (
               <div className="mt-4">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-maroon-900/50">
-                  Earlier games (before rounds)
+                  Single games · {day.unassigned.length}
                 </p>
                 <ul className="space-y-1.5">
                   <AnimatePresence initial={false}>
                     {day.unassigned.map((g) => (
-                      <GameRow key={g.id ?? g.won_at} game={g} onRemove={removeGame} />
+                      <GameRow
+                        key={g.id ?? g.won_at}
+                        game={g}
+                        onRemove={removeGame}
+                        onToggleBlanks={setGameBlanks}
+                      />
                     ))}
                   </AnimatePresence>
                 </ul>

@@ -210,6 +210,13 @@ export function totalPoints(records: GameRecord[]): number {
 
 export const GAMES_PER_ROUND = 4;
 
+// Was this game played with blanks? Round games follow their round's setting;
+// single games carry their own.
+export function gameBlanks(g: GameRecord, roundById: Map<string, Round>): boolean {
+  if (g.round_id) return roundById.get(g.round_id)?.blanks ?? false;
+  return !!g.blanks;
+}
+
 export interface RoundView {
   round: Round;
   number: number; // 1-based within its day
