@@ -22,7 +22,7 @@ export function Segmented<T extends string | boolean>({
   label: string;
   size?: "sm" | "md";
 }) {
-  const pad = size === "sm" ? "px-2.5 py-1 text-xs" : "px-3.5 py-1.5 text-sm";
+  const pad = size === "sm" ? "min-h-8 px-2.5 py-1 text-xs" : "min-h-10 px-3.5 py-1.5 text-sm";
   return (
     <div
       role="radiogroup"
@@ -41,7 +41,7 @@ export function Segmented<T extends string | boolean>({
             disabled={disabled}
             onClick={() => onChange(o.value)}
             className={`whitespace-nowrap rounded-full font-semibold transition-colors ${pad} ${
-              active ? "bg-maroon-700 text-cream-50 shadow-sm" : "text-maroon-800/75 hover:text-maroon-800"
+              active ? "bg-maroon-700 text-cream-50 shadow-sm" : "text-maroon-800 hover:bg-cream-100"
             }`}
           >
             {o.label}
@@ -63,6 +63,8 @@ interface WinSheetProps {
 export function WinSheet({ hand, at, roundLabel, onConfirm, onClose }: WinSheetProps) {
   const [jokerless, setJokerless] = useState(false);
   const [selfDrawn, setSelfDrawn] = useState(false);
+  // Locks the confirm button after the first tap so a double-tap can't log twice.
+  const [submitted, setSubmitted] = useState(false);
 
   const alwaysJokerless = hand ? isAlwaysJokerless(hand.id) : false;
 
@@ -71,6 +73,7 @@ export function WinSheet({ hand, at, roundLabel, onConfirm, onClose }: WinSheetP
     if (!hand) return;
     setJokerless(isAlwaysJokerless(hand.id));
     setSelfDrawn(false);
+    setSubmitted(false);
   }, [hand]);
 
   useEffect(() => {
@@ -110,7 +113,7 @@ export function WinSheet({ hand, at, roundLabel, onConfirm, onClose }: WinSheetP
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="font-display text-xl font-bold text-maroon-800">Log a win 🏆</h2>
-                <p className="mt-0.5 text-xs text-maroon-900/55">
+                <p className="mt-0.5 text-xs text-maroon-900/75">
                   {dateLabel ? `${dateLabel} · ` : ""}
                   {roundLabel}
                 </p>
@@ -118,7 +121,7 @@ export function WinSheet({ hand, at, roundLabel, onConfirm, onClose }: WinSheetP
               <button
                 onClick={onClose}
                 aria-label="Close"
-                className="rounded-full px-2 py-1 text-maroon-900/40 hover:bg-cream-200 hover:text-maroon-800"
+                className="rounded-full px-2 py-1 text-maroon-900/65 hover:bg-cream-200 hover:text-maroon-800"
               >
                 ✕
               </button>
@@ -133,7 +136,7 @@ export function WinSheet({ hand, at, roundLabel, onConfirm, onClose }: WinSheetP
                   </span>
                 ))}
               </div>
-              <p className="mt-1 text-xs text-maroon-900/55">
+              <p className="mt-1 text-xs text-maroon-900/75">
                 {hand.description} · {hand.points} pts · {hand.concealed ? "Concealed" : "Exposed"}
               </p>
             </div>
@@ -154,7 +157,7 @@ export function WinSheet({ hand, at, roundLabel, onConfirm, onClose }: WinSheetP
                 />
               </div>
               {alwaysJokerless && (
-                <p className="-mt-1 text-right text-xs text-maroon-900/50">
+                <p className="-mt-1 text-right text-xs text-maroon-900/70">
                   Singles &amp; Pairs never use jokers, so no bonus.
                 </p>
               )}
@@ -192,14 +195,19 @@ export function WinSheet({ hand, at, roundLabel, onConfirm, onClose }: WinSheetP
             <div className="mt-5 flex gap-2">
               <button
                 onClick={onClose}
-                className="flex-1 rounded-full bg-cream-200 py-2.5 text-sm font-semibold text-maroon-800 hover:bg-cream-300"
+                className="min-h-11 flex-1 rounded-full bg-cream-200 py-2.5 text-sm font-semibold text-maroon-800 hover:bg-cream-300"
               >
                 Cancel
               </button>
               <motion.button
                 whileTap={{ scale: 0.96 }}
-                onClick={() => onConfirm({ jokerless, selfDrawn })}
-                className="flex-[2] rounded-full bg-maroon-700 py-2.5 text-sm font-semibold text-cream-50 shadow hover:bg-maroon-800"
+                disabled={submitted}
+                onClick={() => {
+                  if (submitted) return;
+                  setSubmitted(true);
+                  onConfirm({ jokerless, selfDrawn });
+                }}
+                className="min-h-11 flex-[2] rounded-full disabled:opacity-70 bg-maroon-700 py-2.5 text-sm font-semibold text-cream-50 shadow hover:bg-maroon-800"
               >
                 Log win · {pts.total} pts
               </motion.button>

@@ -1,19 +1,33 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { SECTIONS, ALL_HANDS } from "@/data/hands";
-import { useWins } from "@/hooks/useWins";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, MotionConfig, motion } from "framer-motion";
+import { SECTIONS, ALL_HANDS, CARD_YEAR } from "@/data/hands";
+import { useWins, type LogOptions } from "@/hooks/useWins";
 import { useNotes } from "@/hooks/useNotes";
-import { StatsBar } from "@/components/StatsBar";
+import { useFavorites } from "@/hooks/useFavorites";
 import { FilterBar } from "@/components/FilterBar";
 import { HandCard } from "@/components/HandCard";
 import { StatsView } from "@/components/StatsView";
 import { CalendarView } from "@/components/CalendarView";
 import { RoundBar } from "@/components/RoundBar";
 import { WinSheet } from "@/components/WinSheet";
-import { winPoints, GAMES_PER_ROUND, localDayKey, roundsForDay } from "@/lib/stats";
-import type { GameOutcome, Hand, HandFilter, PlayMode, WinOptions } from "@/lib/types";
+import { CardChallenge } from "@/components/CardChallenge";
+import { RecapSheet } from "@/components/RecapSheet";
+import {
+  GAMES_PER_ROUND,
+  cardProgress,
+  cardYearRecords,
+  dayRecap,
+  localDayKey,
+  outcomeTotals,
+  recentlyWonHands,
+  sectionStats,
+  roundsForDay,
+  winMilestone,
+  winPoints,
+} from "@/lib/stats";
+import type { GameRecord, Hand, HandFilter, PlayMode, WinOptions } from "@/lib/types";
 
 // Per-device preferences (how you're playing, blanks for single games).
 const MODE_KEY = "mahj_play_mode";
@@ -35,12 +49,22 @@ function writePref(key: string, value: unknown) {
 }
 
 type View = "hands" | "stats" | "calendar";
+const VIEWS: { key: View; label: string; icon: string }[] = [
+  { key: "hands", label: "Hands", icon: "🀙" },
+  { key: "stats", label: "Stats", icon: "📊" },
+  { key: "calendar", label: "Calendar", icon: "📅" },
+];
 
-const VIEW_LABEL: Record<View, string> = {
-  hands: "🀙 Hands",
-  stats: "📊 Stats",
-  calendar: "📅 Calendar",
-};
+// Taps on the same log button closer together than this are treated as one.
+const DOUBLE_TAP_MS = 700;
+
+interface Toast {
+  id: number;
+  label: string;
+  detail?: string;
+  tone?: "default" | "celebrate";
+  undo?: () => void;
+}
 
 function handMatches(hand: Hand, sectionName: string, q: string): boolean {
   if (!q) return true;
@@ -51,36 +75,41 @@ function handMatches(hand: Hand, sectionName: string, q: string): boolean {
 }
 
 export default function Home() {
+  const wins = useWins();
   const {
     records,
     rounds,
     counts,
     loading,
-    totalWins,
-    playedCount,
+    todayRound,
     currentRound,
     nextRoundNumber,
     defaultBlanks,
     logWin,
     logLoss,
     logWall,
-    startRound,
     setRoundBlanks,
+    endRound,
     removeRound,
     setGameBlanks,
     undoWin,
     removeGame,
     status,
+    saveState,
     errorMsg,
     reload,
-  } = useWins();
+    retrySaves,
+    clearError,
+  } = wins;
   const { notes, setNote } = useNotes();
+  const { favorites, toggleFavorite } = useFavorites();
   const [view, setView] = useState<View>("hands");
   const [filter, setFilter] = useState<HandFilter>("all");
   const [query, setQuery] = useState("");
-  const [toast, setToast] = useState<{ label: string; undo?: () => void } | null>(null);
-  const [winTarget, setWinTarget] = useState<{ hand: Hand; at?: Date } | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [winTarget, setWinTarget] = useState<{ hand: Hand; opts?: LogOptions; label?: string } | null>(null);
   const [celebrate, setCelebrate] = useState<{ handId: string; key: number }>({ handId: "", key: 0 });
+  const [recapDay, setRecapDay] = useState<string | null>(null);
 
   // Blanks choice for a round that hasn't started yet (follows the last round's setting).
   const [pendingBlanks, setPendingBlanks] = useState(false);
@@ -104,134 +133,220 @@ export default function Home() {
     writePref(SINGLE_BLANKS_KEY, b);
   };
   const single = mode === "single";
-  // Logging options for the current mode.
-  const modeOpts = single
-    ? { single: true, blanks: singleBlanks }
-    : { newRoundBlanks: pendingBlanks };
+  const modeOpts: LogOptions = single ? { single: true, blanks: singleBlanks } : { newRoundBlanks: pendingBlanks };
 
-  const todaySingles = useMemo(
-    () => roundsForDay(localDayKey(new Date()), rounds, records).unassigned,
-    [rounds, records],
+  // ---- derived ---------------------------------------------------------------
+  const cardRecords = useMemo(() => cardYearRecords(records), [records]);
+  const progress = useMemo(() => cardProgress(cardRecords), [cardRecords]);
+  const sectionStatsList = useMemo(() => sectionStats(cardRecords), [cardRecords]);
+  const handStats = useMemo(() => recentlyWonHands(cardRecords, ALL_HANDS.length), [cardRecords]);
+  const lastWonById = useMemo(() => new Map(handStats.map((h) => [h.hand.id, h.lastWon])), [handStats]);
+  const todayKey = localDayKey(new Date());
+  const todayDay = useMemo(() => roundsForDay(todayKey, rounds, records), [todayKey, rounds, records]);
+  const todayTotals = useMemo(
+    () => outcomeTotals(records.filter((r) => localDayKey(new Date(r.won_at)) === todayKey)),
+    [records, todayKey],
   );
+  const recap = useMemo(() => (recapDay ? dayRecap(recapDay, records, rounds) : null), [recapDay, records, rounds]);
 
-  const q = query.trim().toLowerCase();
+  // ---- toasts ----------------------------------------------------------------
+  const toastId = useRef(0);
+  const showToast = useCallback((t: Omit<Toast, "id">) => {
+    const id = ++toastId.current;
+    setToast({ ...t, id });
+    window.setTimeout(() => setToast((cur) => (cur?.id === id ? null : cur)), t.tone === "celebrate" ? 7000 : 5500);
+  }, []);
 
-  function showToast(label: string, undo?: () => void) {
-    setToast({ label, undo });
-    window.setTimeout(() => setToast((t) => (t?.label === label ? null : t)), 5000);
+  // Did this game just fill the 4th slot of today's round?
+  function roundNote(opts: LogOptions, record: GameRecord | null): string | undefined {
+    if (!record?.round_id || opts.at) return undefined;
+    const before = currentRound && currentRound.round.id === record.round_id ? currentRound.games : [];
+    if (before.length + 1 !== GAMES_PER_ROUND) return `Round ${currentRound?.number ?? nextRoundNumber} · ${before.length + 1} of ${GAMES_PER_ROUND}`;
+    const w = [...before, record].filter((g) => g.outcome === "win").length;
+    return `Round ${currentRound!.number} complete · ${w} win${w === 1 ? "" : "s"} in ${GAMES_PER_ROUND} games`;
   }
 
-  function undoLatest(outcome: GameOutcome) {
-    const last = records
-      .filter((r) => r.outcome === outcome)
-      .sort((a, b) => (a.won_at < b.won_at ? 1 : -1))[0];
-    if (last) removeGame(last);
+  // ---- logging ---------------------------------------------------------------
+  const lastTap = useRef<Record<string, number>>({});
+  function tooSoon(key: string) {
+    const now = Date.now();
+    if (now - (lastTap.current[key] ?? 0) < DOUBLE_TAP_MS) return true;
+    lastTap.current[key] = now;
+    return false;
   }
 
   function recordResult(kind: "loss" | "wall") {
-    if (kind === "loss") logLoss(modeOpts);
-    else logWall(modeOpts);
-    showToast(kind === "loss" ? "Loss recorded" : "Wall game recorded", () => undoLatest(kind));
-  }
-
-  function confirmWin(opts: WinOptions) {
-    if (!winTarget) return;
-    const { hand, at } = winTarget;
-    logWin(hand.id, {
-      ...modeOpts,
-      at,
-      jokerless: opts.jokerless,
-      selfDrawn: opts.selfDrawn,
+    if (tooSoon(kind)) return;
+    const record = kind === "loss" ? logLoss(modeOpts) : logWall(modeOpts);
+    if (!record) return;
+    showToast({
+      label: kind === "loss" ? "Loss recorded" : "Wall game recorded",
+      detail: roundNote(modeOpts, record),
+      undo: () => removeGame(record),
     });
-    setCelebrate((c) => ({ handId: hand.id, key: c.key + 1 }));
-    const pts = winPoints(hand.id, opts).total;
-    showToast(`Win logged · +${pts} pts`, () => undoWin(hand.id));
-    setWinTarget(null);
   }
 
-  const winRoundLabel = single
-    ? `Single game · ${singleBlanks ? "Blanks" : "No blanks"}`
-    : winTarget?.at
-    ? "Adds to that day's round"
-    : currentRound
-      ? `Round ${currentRound.number} · Game ${currentRound.games.length + 1} of ${GAMES_PER_ROUND}`
-      : `Starts Round ${nextRoundNumber}`;
+  function requestWin(hand: Hand, opts?: LogOptions, label?: string) {
+    setWinTarget({ hand, opts, label });
+  }
+
+  // The sheet stays on screen while it animates out, so a fast double-tap can
+  // reach a stale confirm. Each request may be confirmed exactly once.
+  const confirmed = useRef<object | null>(null);
+  function confirmWin(choice: WinOptions) {
+    if (!winTarget || confirmed.current === winTarget) return;
+    confirmed.current = winTarget;
+    const { hand } = winTarget;
+    const opts: LogOptions = { ...(winTarget.opts ?? modeOpts), jokerless: choice.jokerless, selfDrawn: choice.selfDrawn };
+    setWinTarget(null);
+    const milestone = winMilestone(cardRecords, hand.id);
+    const record = logWin(hand.id, opts);
+    if (!record) return;
+    setCelebrate((c) => ({ handId: hand.id, key: c.key + 1 }));
+    const pts = winPoints(hand.id, choice).total;
+    const undo = () => removeGame(record);
+    const rn = roundNote(opts, record);
+
+    if (milestone.cardComplete) {
+      showToast({ tone: "celebrate", label: `🎉 Every hand on the ${CARD_YEAR} card won!`, detail: `+${pts} pts`, undo });
+    } else if (milestone.sectionComplete) {
+      showToast({ tone: "celebrate", label: `🎉 ${milestone.sectionComplete} complete!`, detail: `Every hand in the section won · ${milestone.uniqueAfter} of ${ALL_HANDS.length}`, undo });
+    } else if (milestone.milestone) {
+      showToast({ tone: "celebrate", label: `✨ ${milestone.milestone} unique hand${milestone.milestone === 1 ? "" : "s"} won!`, detail: `+${pts} pts`, undo });
+    } else if (milestone.firstForHand) {
+      showToast({ tone: "celebrate", label: "✨ First win with this hand", detail: `${milestone.uniqueAfter} of ${ALL_HANDS.length} unique hands · +${pts} pts`, undo });
+    } else {
+      showToast({ label: `Win logged · +${pts} pts`, detail: rn, undo });
+    }
+  }
+
+  const winRoundLabel = winTarget?.label
+    ? winTarget.label
+    : single
+      ? `Single game · ${singleBlanks ? "Blanks" : "No blanks"}`
+      : currentRound
+        ? `Round ${currentRound.number} · Game ${currentRound.games.length + 1} of ${GAMES_PER_ROUND}`
+        : `Starts Round ${nextRoundNumber}`;
+
+  // ---- hands list ------------------------------------------------------------
+  const q = query.trim().toLowerCase();
+  const recentIds = useMemo(() => handStats.slice(0, 12).map((h) => h.hand.id), [handStats]);
+  const filterCounts = {
+    all: ALL_HANDS.length,
+    won: progress.won,
+    unwon: progress.remaining,
+    favorites: favorites.size,
+  };
 
   const sections = useMemo(() => {
+    if (filter === "recent") {
+      const hands = recentIds
+        .map((id) => ALL_HANDS.find((h) => h.id === id)!)
+        .filter((h) => handMatches(h, h.sectionId, q));
+      return hands.length ? [{ id: "recent", name: "Recently won", note: "Newest win first", accentClass: "", hands }] : [];
+    }
     return SECTIONS.map((section) => {
       const hands = section.hands.filter((hand) => {
-        const played = (counts[hand.id] ?? 0) > 0;
-        if (filter === "played" && !played) return false;
-        if (filter === "unplayed" && played) return false;
+        const won = (counts[hand.id] ?? 0) > 0;
+        if (filter === "won" && !won) return false;
+        if (filter === "unwon" && won) return false;
+        if (filter === "favorites" && !favorites.has(hand.id)) return false;
         return handMatches(hand, section.name, q);
       });
       return { ...section, hands };
     }).filter((section) => section.hands.length > 0);
-  }, [counts, filter, q]);
+  }, [counts, filter, q, favorites, recentIds]);
+
+  const sectionProgress = useMemo(
+    () =>
+      new Map(
+        SECTIONS.map((s) => [s.id, { won: s.hands.filter((h) => (counts[h.id] ?? 0) > 0).length, total: s.hands.length }]),
+      ),
+    [counts],
+  );
 
   function jumpTo(id: string) {
-    document.getElementById(`sec-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById(`sec-${id}`)?.scrollIntoView({ block: "start" });
   }
 
+  // ---- render ------------------------------------------------------------------
+  const saveLine =
+    status === "offline"
+      ? { text: "Saved on this device", tone: "muted" }
+      : status === "loading"
+        ? { text: "Opening your journal…", tone: "muted" }
+        : saveState === "error"
+          ? { text: "Couldn't save.", tone: "error" }
+          : saveState === "saving"
+            ? { text: "Saving…", tone: "muted" }
+            : status === "error"
+              ? { text: "Not connected", tone: "error" }
+              : { text: "✓ All changes saved", tone: "ok" };
+
   return (
-    <main className="paper-texture mx-auto min-h-dvh max-w-6xl px-4 pb-20 pt-6 sm:px-6">
-      <WinSheet
-        hand={winTarget?.hand ?? null}
-        at={winTarget?.at}
-        roundLabel={winRoundLabel}
-        onConfirm={confirmWin}
-        onClose={() => setWinTarget(null)}
-      />
+    <MotionConfig reducedMotion="user">
+      <main className="paper-texture mx-auto min-h-dvh max-w-6xl px-4 pb-24 pt-3 sm:px-6 sm:pt-5">
+        <WinSheet
+          hand={winTarget?.hand ?? null}
+          at={winTarget?.opts?.at}
+          roundLabel={winRoundLabel}
+          onConfirm={confirmWin}
+          onClose={() => setWinTarget(null)}
+        />
+        <RecapSheet dayKey={recapDay} recap={recap} onClose={() => setRecapDay(null)} />
 
-      {/* Transient confirmation toast with Undo */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full bg-maroon-800 py-2 pl-4 pr-2 text-sm font-medium text-cream-50 shadow-lg"
-          >
-            <span>{toast.label}</span>
-            {toast.undo && (
-              <button
-                onClick={() => {
-                  toast.undo?.();
-                  setToast(null);
-                }}
-                className="rounded-full bg-cream-50/15 px-3 py-1 text-xs font-semibold hover:bg-cream-50/25"
+        {/* Toast with Undo */}
+        <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4" aria-live="polite">
+          <AnimatePresence mode="wait">
+            {toast && (
+              <motion.div
+                key={toast.id}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8, transition: { duration: 0.12 } }}
+                className={`pointer-events-auto flex max-w-md items-center gap-3 rounded-2xl py-2.5 pl-4 pr-2 text-cream-50 shadow-lg ${
+                  toast.tone === "celebrate" ? "bg-maroon-800 ring-2 ring-gold" : "bg-maroon-800"
+                }`}
               >
-                Undo
-              </button>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">{toast.label}</p>
+                  {toast.detail && <p className="text-xs text-cream-100/85">{toast.detail}</p>}
+                </div>
+                {toast.undo && (
+                  <button
+                    onClick={() => {
+                      toast.undo?.();
+                      setToast(null);
+                    }}
+                    className="min-h-10 shrink-0 rounded-full bg-cream-50/15 px-4 text-sm font-semibold hover:bg-cream-50/25"
+                  >
+                    Undo
+                  </button>
+                )}
+              </motion.div>
             )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </AnimatePresence>
+        </div>
 
-      {/* Masthead */}
-      <header className="flex flex-col items-center gap-5 text-center">
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full rounded-3xl bg-maroon-700 px-6 pb-5 pt-6 text-cream-50 shadow-[0_10px_30px_rgba(52,8,17,0.18)]"
-        >
-          <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-cream-200/70">
-            🀄 2026 NMJL card
+        {/* Masthead (compact) */}
+        <header className="rounded-3xl bg-maroon-700 px-4 pb-3 pt-3.5 text-center text-cream-50 shadow-[0_8px_24px_rgba(52,8,17,0.16)] sm:px-6 sm:pt-4">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-cream-200/85">
+            🀄 {CARD_YEAR} NMJL card
           </p>
-          <h1 className="mt-1 font-display text-4xl font-bold tracking-tight sm:text-5xl">
+          <h1 className="font-display text-[1.75rem] font-bold leading-tight tracking-tight sm:text-4xl">
             The Mahj Journal
           </h1>
-          <p className="mt-1 text-sm text-cream-100/75">Your hands, rounds &amp; wins.</p>
+          <p className="text-xs text-cream-100/85 sm:text-sm">Your hands, rounds &amp; wins.</p>
 
-          {/* View switcher */}
-          <div className="mt-4 inline-flex rounded-full bg-maroon-900/40 p-1">
-            {(["hands", "stats", "calendar"] as View[]).map((v) => {
-              const active = view === v;
+          <nav aria-label="Sections" className="mx-auto mt-2.5 grid max-w-sm grid-cols-3 rounded-full bg-maroon-900/40 p-1">
+            {VIEWS.map((v) => {
+              const active = view === v.key;
               return (
                 <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  className="relative rounded-full px-4 py-1.5 text-sm font-semibold sm:px-5"
+                  key={v.key}
+                  onClick={() => setView(v.key)}
+                  aria-current={active ? "page" : undefined}
+                  className="relative min-h-10 rounded-full px-2 text-sm font-semibold"
                 >
                   {active && (
                     <motion.span
@@ -240,170 +355,209 @@ export default function Home() {
                       transition={{ type: "spring", stiffness: 500, damping: 32 }}
                     />
                   )}
-                  <span className={`relative z-10 ${active ? "text-maroon-800" : "text-cream-100/80"}`}>
-                    {VIEW_LABEL[v]}
+                  <span className={`relative z-10 ${active ? "text-maroon-800" : "text-cream-50"}`}>
+                    <span aria-hidden>{v.icon} </span>
+                    {v.label}
                   </span>
                 </button>
               );
             })}
-          </div>
-        </motion.div>
+          </nav>
+        </header>
 
-        <p className="text-xs text-maroon-900/50">
-          {status === "online"
-            ? "✓ Synced to Supabase"
-            : status === "loading"
-              ? "Opening your journal…"
-              : status === "offline"
-                ? "Saved on this device (offline mode)"
-                : "⚠️ Not connected"}
-        </p>
-      </header>
-
-      {/* Connection error banner — makes clear data isn't lost, offers retry */}
-      <AnimatePresence>
-        {status === "error" && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="mx-auto mt-4 max-w-2xl rounded-2xl bg-outcome-wall-soft p-4 text-center ring-1 ring-outcome-wall/40"
+        {/* Save status */}
+        <div className="mt-2 flex min-h-6 items-center justify-end gap-2 px-1 text-xs" role="status" aria-live="polite">
+          <span
+            className={
+              saveLine.tone === "error"
+                ? "font-semibold text-tile-red"
+                : saveLine.tone === "ok"
+                  ? "text-outcome-win-ink"
+                  : "text-maroon-900/75"
+            }
           >
-            <p className="font-semibold text-outcome-wall-ink">
-              Couldn&apos;t reach your saved data — but it&apos;s not lost.
-            </p>
-            <p className="mt-1 text-sm text-outcome-wall-ink/80">
-              Your games are safe in Supabase; this is just a connection issue.
-            </p>
-            {errorMsg && <p className="mt-1 text-xs text-outcome-wall-ink/60">({errorMsg})</p>}
-            <button
-              onClick={reload}
-              className="mt-3 rounded-full bg-maroon-700 px-4 py-1.5 text-sm font-semibold text-cream-50 hover:bg-maroon-800"
-            >
+            {saveLine.text}
+          </span>
+          {saveState === "error" && (
+            <button onClick={retrySaves} className="font-semibold text-maroon-700 underline underline-offset-2">
               Retry
             </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </div>
 
-      {/* Body */}
-      {loading ? (
-        <div className="mt-20 text-center font-display text-maroon-900/50">Opening your journal…</div>
-      ) : view === "stats" ? (
-        <StatsView records={records} rounds={rounds} removeGame={removeGame} />
-      ) : view === "calendar" ? (
-        <CalendarView
-          records={records}
-          rounds={rounds}
-          mode={mode}
-          onMode={setMode}
-          singleBlanks={singleBlanks}
-          onSingleBlanks={setSingleBlanks}
-          setGameBlanks={setGameBlanks}
-          defaultBlanks={defaultBlanks}
-          removeGame={removeGame}
-          removeRound={removeRound}
-          setRoundBlanks={setRoundBlanks}
-          startRound={startRound}
-          logLoss={logLoss}
-          logWall={logWall}
-          onRequestWin={(hand, at) => setWinTarget({ hand, at })}
-        />
-      ) : (
-        <>
-          <div className="mt-5 flex flex-col items-center gap-5">
-            <RoundBar
-              mode={mode}
-              onMode={setMode}
-              currentRound={currentRound}
-              nextRoundNumber={nextRoundNumber}
-              pendingBlanks={pendingBlanks}
-              onPendingBlanks={setPendingBlanks}
-              onToggleBlanks={setRoundBlanks}
-              onNewRound={() => startRound({ blanks: currentRound?.round.blanks ?? pendingBlanks })}
-              singleBlanks={singleBlanks}
-              onSingleBlanks={setSingleBlanks}
-              todaySingles={todaySingles}
-              onLoss={() => recordResult("loss")}
-              onWall={() => recordResult("wall")}
-            />
-            <StatsBar totalHands={ALL_HANDS.length} playedCount={playedCount} totalWins={totalWins} />
+        {/* A change the database refused (e.g. a full round) */}
+        {errorMsg && saveState === "saved" && status === "online" && (
+          <div className="mx-auto mt-1 flex max-w-2xl items-center justify-between gap-3 rounded-2xl bg-outcome-wall-soft px-4 py-2 text-sm text-outcome-wall-ink ring-1 ring-outcome-wall/40">
+            <span>{errorMsg}</span>
+            <button onClick={clearError} className="shrink-0 text-xs font-semibold underline">
+              Dismiss
+            </button>
           </div>
+        )}
 
-          {/* Controls */}
-          <div className="mt-8 flex flex-col items-center gap-3">
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <FilterBar value={filter} onChange={setFilter} />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search hands…"
-                className="w-56 rounded-full border border-maroon-900/15 bg-cream-50 px-4 py-2 text-sm text-maroon-900 placeholder:text-maroon-900/40 outline-none focus:border-maroon-500"
+        {/* Couldn't load at all — make clear nothing is lost */}
+        <AnimatePresence>
+          {status === "error" && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="mx-auto mt-2 max-w-2xl rounded-2xl bg-outcome-wall-soft p-4 text-center ring-1 ring-outcome-wall/40"
+            >
+              <p className="font-semibold text-outcome-wall-ink">Couldn&apos;t open your journal right now. Your games are safe.</p>
+              <p className="mt-1 text-sm text-outcome-wall-ink">This is just a connection problem. Try again in a moment.</p>
+              <button
+                onClick={() => void reload()}
+                className="mt-3 min-h-10 rounded-full bg-maroon-700 px-5 text-sm font-semibold text-cream-50 hover:bg-maroon-800"
+              >
+                Try again
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Body */}
+        {loading ? (
+          <div className="mt-20 text-center font-display text-maroon-900/70">Opening your journal…</div>
+        ) : view === "stats" ? (
+          <StatsView records={records} rounds={rounds} removeGame={removeGame} />
+        ) : view === "calendar" ? (
+          <CalendarView
+            records={records}
+            rounds={rounds}
+            singleBlanks={singleBlanks}
+            onSingleBlanks={setSingleBlanks}
+            defaultBlanks={defaultBlanks}
+            setGameBlanks={setGameBlanks}
+            removeGame={removeGame}
+            removeRound={removeRound}
+            endRound={endRound}
+            setRoundBlanks={setRoundBlanks}
+            onLog={(kind, opts) => {
+              const record = kind === "loss" ? logLoss(opts) : logWall(opts);
+              if (record)
+                showToast({ label: kind === "loss" ? "Loss added" : "Wall game added", undo: () => removeGame(record) });
+            }}
+            onRequestWin={requestWin}
+            onRecap={setRecapDay}
+          />
+        ) : (
+          <>
+            <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+              <RoundBar
+                mode={mode}
+                onMode={setMode}
+                todayRound={todayRound}
+                currentRound={currentRound}
+                nextRoundNumber={nextRoundNumber}
+                pendingBlanks={pendingBlanks}
+                onPendingBlanks={setPendingBlanks}
+                onToggleBlanks={setRoundBlanks}
+                onEndRound={endRound}
+                singleBlanks={singleBlanks}
+                onSingleBlanks={setSingleBlanks}
+                todaySingles={todayDay.unassigned}
+                today={todayTotals}
+                quickHands={handStats.slice(0, 8)}
+                onQuickWin={(h) => requestWin(h)}
+                onLoss={() => recordResult("loss")}
+                onWall={() => recordResult("wall")}
+                onRecap={() => setRecapDay(todayKey)}
+              />
+              <CardChallenge progress={progress} totalWins={cardRecords.filter((r) => r.outcome === "win").length}
+                sections={sectionStatsList}
               />
             </div>
 
-            {/* Section quick-nav */}
-            <div className="flex flex-wrap items-center justify-center gap-1.5">
-              {sections.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => jumpTo(s.id)}
-                  className="rounded-full bg-cream-50 px-2.5 py-1 text-xs font-medium text-maroon-800/80 ring-1 ring-maroon-900/10 transition-colors hover:bg-maroon-700 hover:text-cream-50"
-                >
-                  {s.name}
-                </button>
-              ))}
+            {/* Controls */}
+            <div className="mt-6 flex flex-col gap-3 sm:items-center">
+              <FilterBar value={filter} onChange={setFilter} counts={filterCounts} />
+              <label className="sr-only" htmlFor="hand-search">
+                Search hands
+              </label>
+              <input
+                id="hand-search"
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search hands, e.g. 2468 or NEWS"
+                className="min-h-11 w-full rounded-full border border-maroon-900/20 bg-cream-50 px-4 text-base text-maroon-900 outline-none placeholder:text-maroon-900/55 focus:border-maroon-500 sm:w-80 sm:text-sm"
+              />
+              {filter !== "recent" && (
+                <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:justify-center sm:px-0">
+                  {sections.map((s) => {
+                    const p = sectionProgress.get(s.id);
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => jumpTo(s.id)}
+                        className="min-h-9 shrink-0 whitespace-nowrap rounded-full bg-cream-50 px-3 text-xs font-semibold text-maroon-800 ring-1 ring-maroon-900/15 transition-colors hover:bg-maroon-700 hover:text-cream-50"
+                      >
+                        {s.name}
+                        {p && (
+                          <span className="ml-1 font-normal tabular-nums opacity-80">
+                            {p.won}/{p.total}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
 
-          <div className="mt-8 space-y-10">
-            <AnimatePresence mode="popLayout">
-              {sections.map((section) => (
-                <motion.section
-                  key={section.id}
-                  id={`sec-${section.id}`}
-                  layout
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="scroll-mt-4"
-                >
-                  <div className="mb-3 flex items-center gap-3">
-                    <h2 className="font-display text-2xl font-bold text-maroon-700">{section.name}</h2>
-                    <span className="h-px flex-1 bg-maroon-900/15" />
-                  </div>
-                  <motion.div layout className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <AnimatePresence mode="popLayout">
+            <div className="mt-6 space-y-8">
+              {sections.map((section) => {
+                const p = sectionProgress.get(section.id);
+                return (
+                  <section key={section.id} id={`sec-${section.id}`} className="scroll-mt-4" aria-label={section.name}>
+                    <div className="mb-3 flex items-center gap-3">
+                      <h2 className="font-display text-2xl font-bold text-maroon-700">{section.name}</h2>
+                      {p && (
+                        <span className="text-sm text-maroon-900/75">
+                          {p.won} of {p.total} won{p.won === p.total ? " ✓" : ""}
+                        </span>
+                      )}
+                      <span className="h-px flex-1 bg-maroon-900/15" />
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       {section.hands.map((hand) => (
                         <HandCard
                           key={hand.id}
                           hand={hand}
                           winCount={counts[hand.id] ?? 0}
+                          lastWon={lastWonById.get(hand.id)}
                           note={notes[hand.id] ?? ""}
+                          favorite={favorites.has(hand.id)}
                           celebrateKey={celebrate.handId === hand.id ? celebrate.key : 0}
-                          onRequestWin={(h) => setWinTarget({ hand: h })}
+                          onRequestWin={(h) => requestWin(h)}
                           onUndo={undoWin}
                           onNoteChange={setNote}
+                          onToggleFavorite={toggleFavorite}
                         />
                       ))}
-                    </AnimatePresence>
-                  </motion.div>
-                </motion.section>
-              ))}
-            </AnimatePresence>
+                    </div>
+                  </section>
+                );
+              })}
 
-            {sections.length === 0 && (
-              <div className="mt-20 text-center text-maroon-900/50">No hands match this filter.</div>
-            )}
-          </div>
-        </>
-      )}
+              {sections.length === 0 && (
+                <div className="mt-12 text-center text-maroon-900/75">
+                  {filter === "favorites" && !q
+                    ? "No favorites yet. Tap ☆ on any hand to add it here."
+                    : filter === "recent" && !q
+                      ? "No wins logged yet."
+                      : "No hands match this filter."}
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
-      <footer className="mt-16 text-center text-xs text-maroon-900/40">
-        The Mahj Journal · 2026 National Mah Jongg League card · {ALL_HANDS.length} hands · made
-        for Lottie 🀄
-      </footer>
-    </main>
+        <footer className="mt-16 text-center text-xs text-maroon-900/70">
+          The Mahj Journal · {CARD_YEAR} National Mah Jongg League card · {ALL_HANDS.length} hands · made for Lottie 🀄
+        </footer>
+      </main>
+    </MotionConfig>
   );
 }

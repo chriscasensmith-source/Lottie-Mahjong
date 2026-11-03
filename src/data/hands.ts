@@ -1089,3 +1089,7 @@ export const SECTIONS: Section[] = [
 
 // Flat list of every hand, handy for lookups and counts.
 export const ALL_HANDS = SECTIONS.flatMap((s) => s.hands);
+
+// The NMJL card year these hands belong to. Games are stamped with it, so a
+// future card (with its own hand ids) never mixes with 2026 progress.
+export const CARD_YEAR = 2026;

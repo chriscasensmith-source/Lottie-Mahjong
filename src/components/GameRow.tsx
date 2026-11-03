@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import type { GameRecord } from "@/lib/types";
 import { OUTCOME_META } from "@/lib/outcomes";
-import { gamePoints, handById, isAlwaysJokerless } from "@/lib/stats";
+import { detailsRecorded, gamePoints, handById, isAlwaysJokerless } from "@/lib/stats";
 import { COLOR_CLASS } from "@/components/HandCard";
 
 interface GameRowProps {
@@ -23,7 +23,8 @@ export function GameRow({ game, index, meta, showDate, onRemove, onToggleBlanks 
   const time = showDate
     ? when.toLocaleDateString(undefined, { month: "short", day: "numeric" })
     : when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const noJokers = game.outcome === "win" && game.jokerless && hand && !isAlwaysJokerless(hand.id);
+  const tracked = detailsRecorded(game);
+  const noJokers = tracked && game.outcome === "win" && game.jokerless && hand && !isAlwaysJokerless(hand.id);
 
   return (
     <motion.li
@@ -50,7 +51,7 @@ export function GameRow({ game, index, meta, showDate, onRemove, onToggleBlanks 
                 No jokers
               </span>
             )}
-            {game.self_drawn && (
+            {tracked && game.self_drawn && (
               <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
                 Self-drawn
               </span>
@@ -65,7 +66,7 @@ export function GameRow({ game, index, meta, showDate, onRemove, onToggleBlanks 
               ))}
             </span>
           )}
-          {meta && <span className="truncate text-xs text-maroon-900/50">{meta}</span>}
+          {meta && <span className="truncate text-xs text-maroon-900/70">{meta}</span>}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
@@ -76,19 +77,19 @@ export function GameRow({ game, index, meta, showDate, onRemove, onToggleBlanks 
             className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 transition-colors ${
               game.blanks
                 ? "bg-maroon-700 text-cream-50 ring-maroon-700"
-                : "bg-white/70 text-maroon-900/60 ring-maroon-900/15 hover:text-maroon-800"
+                : "bg-white/70 text-maroon-900/75 ring-maroon-900/15 hover:text-maroon-800"
             }`}
           >
             {game.blanks ? "Blanks" : "No blanks"}
           </button>
         )}
-        <span className="text-xs text-maroon-900/50">{time}</span>
+        <span className="text-xs text-maroon-900/75">{time}</span>
         {onRemove && (
           <button
             onClick={() => onRemove(game)}
             title="Remove this game"
-            aria-label="Remove this game"
-            className="rounded-full px-1.5 py-0.5 text-xs text-maroon-900/40 transition-colors hover:bg-white/70 hover:text-maroon-700"
+            aria-label={`Remove this ${o.label.toLowerCase()}`}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-xs text-maroon-900/65 transition-colors hover:bg-white/70 hover:text-maroon-700"
           >
             ✕
           </button>

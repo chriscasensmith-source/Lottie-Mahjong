@@ -1,5 +1,11 @@
-import { ALL_HANDS, SECTIONS } from "@/data/hands";
-import type { GameOutcome, GameRecord, Hand, Round } from "@/lib/types";
+import { ALL_HANDS, CARD_YEAR, SECTIONS } from "@/data/hands";
+import type { GameOutcome, GameRecord, Hand, Round, Tracked } from "@/lib/types";
+
+// ---------------------------------------------------------------------------
+// Every number in the app comes from these helpers, so each definition lives
+// in exactly one place. Rates return null when the denominator is zero, so
+// the UI can show an empty state instead of 0% or NaN.
+// ---------------------------------------------------------------------------
 
 // hand id -> hand, and hand id -> its section (id + display name).
 const HAND_BY_ID = new Map<string, Hand>(ALL_HANDS.map((h) => [h.id, h]));
@@ -14,15 +20,55 @@ export function handById(id: string): Hand | undefined {
   return HAND_BY_ID.get(id);
 }
 
-const wins = (records: GameRecord[]) =>
-  records.filter((r) => r.outcome === "win" && r.hand_id);
+export function sectionOf(handId: string): { id: string; name: string } | undefined {
+  return HAND_SECTION.get(handId);
+}
+
+const byTimeAsc = (a: GameRecord, b: GameRecord) => (a.won_at < b.won_at ? -1 : a.won_at > b.won_at ? 1 : 0);
+const byTimeDesc = (a: GameRecord, b: GameRecord) => byTimeAsc(b, a);
+
+const isWin = (r: GameRecord) => r.outcome === "win" && !!r.hand_id;
+const wins = (records: GameRecord[]) => records.filter(isWin);
+
+export function ratio(num: number, den: number): number | null {
+  return den > 0 ? num / den : null;
+}
+
+// "26.3%" or "—". One decimal everywhere for consistency.
+export function fmtPct(r: number | null, digits = 1): string {
+  return r === null ? "—" : `${(r * 100).toFixed(digits)}%`;
+}
+
+export function fmtNum(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+// ---------------------------------------------------------------------------
+// Card year
+// ---------------------------------------------------------------------------
+
+export function gameCardYear(r: GameRecord): number {
+  return r.card_year ?? CARD_YEAR;
+}
+
+// Games played with the current card. Card progress only ever uses these.
+export function cardYearRecords(records: GameRecord[], year = CARD_YEAR): GameRecord[] {
+  return records.filter((r) => gameCardYear(r) === year);
+}
+
+// ---------------------------------------------------------------------------
+// Outcomes
+// ---------------------------------------------------------------------------
 
 export interface OutcomeTotals {
   win: number;
   loss: number;
   wall: number;
-  total: number;
-  winRate: number; // 0–100, share of all games that were wins
+  total: number; // win + loss + wall
+  decided: number; // win + loss
+  winRate: number | null; // overall: wins / total games
+  decisiveRate: number | null; // wins / (wins + losses)
+  wallRate: number | null; // walls / total games
 }
 
 export function outcomeTotals(records: GameRecord[]): OutcomeTotals {
@@ -32,30 +78,127 @@ export function outcomeTotals(records: GameRecord[]): OutcomeTotals {
   for (const r of records) {
     if (r.outcome === "win") win++;
     else if (r.outcome === "loss") loss++;
-    else wall++;
+    else if (r.outcome === "wall") wall++;
   }
   const total = win + loss + wall;
-  return { win, loss, wall, total, winRate: total ? (win / total) * 100 : 0 };
+  const decided = win + loss;
+  return {
+    win,
+    loss,
+    wall,
+    total,
+    decided,
+    winRate: ratio(win, total),
+    decisiveRate: ratio(win, decided),
+    wallRate: ratio(wall, total),
+  };
 }
+
+export interface RecentRate {
+  window: number; // requested size, e.g. 50
+  sample: number; // decided games actually used (≤ window)
+  wins: number;
+  rate: number | null;
+}
+
+// Win rate over the most recent `window` decided games (walls skipped).
+export function recentDecisiveRate(records: GameRecord[], window = 50): RecentRate {
+  const decided = records
+    .filter((r) => r.outcome === "win" || r.outcome === "loss")
+    .sort(byTimeDesc)
+    .slice(0, window);
+  const w = decided.filter((r) => r.outcome === "win").length;
+  return { window, sample: decided.length, wins: w, rate: ratio(w, decided.length) };
+}
+
+// ---------------------------------------------------------------------------
+// Unique hands and card progress
+// ---------------------------------------------------------------------------
+
+// Distinct valid hands with at least one recorded win.
+export function uniqueHandsWon(records: GameRecord[]): Set<string> {
+  const set = new Set<string>();
+  for (const r of wins(records)) if (HAND_BY_ID.has(r.hand_id!)) set.add(r.hand_id!);
+  return set;
+}
+
+export const MILESTONES = [1, 25, 50, 60, ALL_HANDS.length];
+
+export interface CardProgress {
+  won: number;
+  total: number;
+  remaining: number;
+  pct: number; // 0–1
+  nextMilestone: number | null;
+  sectionsComplete: string[]; // section names
+}
+
+export function cardProgress(records: GameRecord[]): CardProgress {
+  const won = uniqueHandsWon(records);
+  const total = ALL_HANDS.length;
+  const sectionsComplete = SECTIONS.filter((s) => s.hands.every((h) => won.has(h.id))).map(
+    (s) => s.name,
+  );
+  return {
+    won: won.size,
+    total,
+    remaining: total - won.size,
+    pct: total ? won.size / total : 0,
+    nextMilestone: MILESTONES.find((m) => m > won.size) ?? null,
+    sectionsComplete,
+  };
+}
+
+export interface WinMilestone {
+  firstForHand: boolean; // this hand had never been won before
+  uniqueAfter: number;
+  milestone: number | null; // a MILESTONES value this win reaches
+  sectionComplete: string | null; // section finished by this win
+  cardComplete: boolean;
+}
+
+// What a new win on `handId` would achieve, given the records before it.
+export function winMilestone(before: GameRecord[], handId: string): WinMilestone {
+  const won = uniqueHandsWon(before);
+  const firstForHand = !won.has(handId) && HAND_BY_ID.has(handId);
+  if (!firstForHand) {
+    return { firstForHand, uniqueAfter: won.size, milestone: null, sectionComplete: null, cardComplete: false };
+  }
+  won.add(handId);
+  const sec = HAND_SECTION.get(handId);
+  const section = sec ? SECTIONS.find((s) => s.id === sec.id) : undefined;
+  const sectionComplete = section && section.hands.every((h) => won.has(h.id)) ? section.name : null;
+  return {
+    firstForHand,
+    uniqueAfter: won.size,
+    milestone: MILESTONES.includes(won.size) ? won.size : null,
+    sectionComplete,
+    cardComplete: won.size === ALL_HANDS.length,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Sections
+// ---------------------------------------------------------------------------
 
 export interface SectionStat {
   id: string;
   name: string;
   accentClass: string;
-  wins: number;
-  total: number;
-  playedHands: number;
+  wins: number; // section wins: every win on a hand in this section
+  total: number; // hands in the section
+  wonHands: number; // section completion: distinct hands won at least once
 }
 
-export function winsBySection(records: GameRecord[]): SectionStat[] {
+export function sectionStats(records: GameRecord[]): SectionStat[] {
   const winCount = new Map<string, number>();
-  const playedSet = new Map<string, Set<string>>();
+  const wonSet = new Map<string, Set<string>>();
   for (const r of wins(records)) {
     const sec = HAND_SECTION.get(r.hand_id!);
     if (!sec) continue;
     winCount.set(sec.id, (winCount.get(sec.id) ?? 0) + 1);
-    if (!playedSet.has(sec.id)) playedSet.set(sec.id, new Set());
-    playedSet.get(sec.id)!.add(r.hand_id!);
+    if (!wonSet.has(sec.id)) wonSet.set(sec.id, new Set());
+    wonSet.get(sec.id)!.add(r.hand_id!);
   }
   return SECTIONS.map((s) => ({
     id: s.id,
@@ -63,40 +206,59 @@ export function winsBySection(records: GameRecord[]): SectionStat[] {
     accentClass: s.accentClass,
     wins: winCount.get(s.id) ?? 0,
     total: s.hands.length,
-    playedHands: playedSet.get(s.id)?.size ?? 0,
+    wonHands: wonSet.get(s.id)?.size ?? 0,
   }));
 }
+
+// ---------------------------------------------------------------------------
+// Hands: most won, recently won
+// ---------------------------------------------------------------------------
 
 export interface HandStat {
   hand: Hand;
   sectionName: string;
   wins: number;
+  lastWon: string; // ISO time of the latest win
 }
 
-export function topHands(records: GameRecord[], limit = 6): HandStat[] {
-  const tally = new Map<string, number>();
-  for (const r of wins(records))
-    tally.set(r.hand_id!, (tally.get(r.hand_id!) ?? 0) + 1);
-  const stats: HandStat[] = [];
-  for (const [handId, count] of tally) {
-    const hand = HAND_BY_ID.get(handId);
+function handTallies(records: GameRecord[]): HandStat[] {
+  const map = new Map<string, HandStat>();
+  for (const r of wins(records)) {
+    const hand = HAND_BY_ID.get(r.hand_id!);
     if (!hand) continue;
-    stats.push({
-      hand,
-      sectionName: HAND_SECTION.get(handId)?.name ?? "",
-      wins: count,
-    });
+    const cur = map.get(hand.id);
+    if (cur) {
+      cur.wins++;
+      if (r.won_at > cur.lastWon) cur.lastWon = r.won_at;
+    } else {
+      map.set(hand.id, {
+        hand,
+        sectionName: HAND_SECTION.get(hand.id)?.name ?? "",
+        wins: 1,
+        lastWon: r.won_at,
+      });
+    }
   }
-  stats.sort((a, b) => b.wins - a.wins);
-  return stats.slice(0, limit);
+  return [...map.values()];
 }
 
-export interface DayBucket {
-  key: string;
-  label: string;
-  weekday: string;
-  count: number;
+// Most wins first; ties go to the more recent win.
+export function topHands(records: GameRecord[], limit = 6): HandStat[] {
+  return handTallies(records)
+    .sort((a, b) => b.wins - a.wins || (a.lastWon < b.lastWon ? 1 : -1))
+    .slice(0, limit);
 }
+
+// Distinct hands ordered by their latest win, newest first.
+export function recentlyWonHands(records: GameRecord[], limit = 8): HandStat[] {
+  return handTallies(records)
+    .sort((a, b) => (a.lastWon < b.lastWon ? 1 : -1))
+    .slice(0, limit);
+}
+
+// ---------------------------------------------------------------------------
+// Dates (always the player's local calendar day)
+// ---------------------------------------------------------------------------
 
 // YYYY-MM-DD in the *local* timezone, so an evening game lands on the right day.
 export function localDayKey(date: Date): string {
@@ -105,10 +267,15 @@ export function localDayKey(date: Date): string {
   return `${date.getFullYear()}-${m}-${d}`;
 }
 
+export function dayKeyToDate(key: string): Date {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d, 12);
+}
+
 // All games grouped by local day, each day's list oldest-first.
 export function gamesByDay(records: GameRecord[]): Map<string, GameRecord[]> {
   const map = new Map<string, GameRecord[]>();
-  for (const r of [...records].sort((a, b) => (a.won_at < b.won_at ? -1 : 1))) {
+  for (const r of [...records].sort(byTimeAsc)) {
     const key = localDayKey(new Date(r.won_at));
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(r);
@@ -116,27 +283,51 @@ export function gamesByDay(records: GameRecord[]): Map<string, GameRecord[]> {
   return map;
 }
 
-// Wins per day for the last `days` days (oldest -> newest), including zeros.
-export function winsByDay(records: GameRecord[], days = 14): DayBucket[] {
-  const buckets: DayBucket[] = [];
-  const byKey = new Map<string, number>();
-  for (const r of wins(records)) {
-    const key = localDayKey(new Date(r.won_at));
-    byKey.set(key, (byKey.get(key) ?? 0) + 1);
+export interface OutcomeBucket {
+  key: string;
+  label: string;
+  win: number;
+  loss: number;
+  wall: number;
+  total: number;
+  decisiveRate: number | null;
+}
+
+function bucket(key: string, label: string, games: GameRecord[]): OutcomeBucket {
+  const o = outcomeTotals(games);
+  return { key, label, win: o.win, loss: o.loss, wall: o.wall, total: o.total, decisiveRate: o.decisiveRate };
+}
+
+// The most recent `limit` days she actually played, oldest -> newest.
+// These are playing dates, not sessions: older games have no session data.
+export function outcomesByPlayingDate(records: GameRecord[], limit = 12): OutcomeBucket[] {
+  const days = [...gamesByDay(records).entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  return days.slice(-limit).map(([key, games]) => {
+    const d = dayKeyToDate(key);
+    return bucket(key, `${d.getMonth() + 1}/${d.getDate()}`, games);
+  });
+}
+
+// Every calendar month from the first game to the latest, oldest -> newest.
+export function outcomesByMonth(records: GameRecord[]): OutcomeBucket[] {
+  if (records.length === 0) return [];
+  const byMonth = new Map<string, GameRecord[]>();
+  for (const r of records) {
+    const d = new Date(r.won_at);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (!byMonth.has(key)) byMonth.set(key, []);
+    byMonth.get(key)!.push(r);
   }
-  const today = new Date();
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    const key = localDayKey(d);
-    buckets.push({
-      key,
-      label: `${d.getMonth() + 1}/${d.getDate()}`,
-      weekday: d.toLocaleDateString(undefined, { weekday: "short" }),
-      count: byKey.get(key) ?? 0,
-    });
+  const keys = [...byMonth.keys()].sort();
+  const [fy, fm] = keys[0].split("-").map(Number);
+  const [ly, lm] = keys[keys.length - 1].split("-").map(Number);
+  const out: OutcomeBucket[] = [];
+  for (let y = fy, m = fm; y < ly || (y === ly && m <= lm); m === 12 ? (y++, (m = 1)) : m++) {
+    const key = `${y}-${String(m).padStart(2, "0")}`;
+    const label = new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "short" });
+    out.push(bucket(key, label, byMonth.get(key) ?? []));
   }
-  return buckets;
+  return out;
 }
 
 export interface ActivityItem {
@@ -147,31 +338,25 @@ export interface ActivityItem {
 }
 
 // Most recent games of any outcome, newest first.
-export function recentActivity(
-  records: GameRecord[],
-  limit = 10,
-): ActivityItem[] {
+export function recentActivity(records: GameRecord[], limit = 10): ActivityItem[] {
   return [...records]
-    .sort((a, b) => (a.won_at < b.won_at ? 1 : -1))
+    .sort(byTimeDesc)
     .slice(0, limit)
     .map((record) => ({
       record,
       outcome: record.outcome,
       hand: record.hand_id ? (HAND_BY_ID.get(record.hand_id) ?? null) : null,
-      sectionName: record.hand_id
-        ? (HAND_SECTION.get(record.hand_id)?.name ?? "")
-        : "",
+      sectionName: record.hand_id ? (HAND_SECTION.get(record.hand_id)?.name ?? "") : "",
     }));
 }
 
 // ---------------------------------------------------------------------------
-// Scoring (NMJL-style)
-//   - Jokerless ("No jokers") doubles the hand value — except Singles & Pairs,
-//     which can never use jokers and so get no bonus.
-//   - Self-drawn (you drew your own Mahjong) doubles again.
+// Scoring (NMJL-style). Unchanged rules:
+//   - No jokers doubles the hand value, except Singles & Pairs (never jokers).
+//   - Self-drawn doubles again.
+// Older games never recorded jokers / self-drawn, so they count at base value.
 // ---------------------------------------------------------------------------
 
-// Singles & Pairs hands can't use jokers at all.
 export function isAlwaysJokerless(handId: string): boolean {
   return HAND_SECTION.get(handId)?.id === "singles-pairs";
 }
@@ -190,18 +375,86 @@ export function winPoints(
 
 // Points a single game is worth (0 for losses and walls).
 export function gamePoints(r: GameRecord): number {
-  if (r.outcome !== "win" || !r.hand_id) return 0;
-  return winPoints(r.hand_id, {
-    jokerless: !!r.jokerless,
-    selfDrawn: !!r.self_drawn,
-  }).total;
+  if (!isWin(r)) return 0;
+  return winPoints(r.hand_id!, { jokerless: !!r.jokerless, selfDrawn: !!r.self_drawn }).total;
 }
 
-// Total points scored across winning hands, with multipliers.
+// Gross points from winning hands. There are no payments or net scores.
 export function totalPoints(records: GameRecord[]): number {
   let sum = 0;
   for (const r of records) sum += gamePoints(r);
   return sum;
+}
+
+// ---------------------------------------------------------------------------
+// Optional details: jokers, self-drawn, blanks
+// ---------------------------------------------------------------------------
+
+// Were the optional details captured for this game?
+export function detailsRecorded(r: GameRecord): boolean {
+  return r.details_recorded !== false;
+}
+
+// Blanks for a game: round games follow their round, single games carry their
+// own value, and older games that were never asked are unknown (null).
+export function gameBlanks(g: GameRecord, roundById: Map<string, Round>): Tracked {
+  if (g.round_id) {
+    const round = roundById.get(g.round_id);
+    if (round) return round.blanks;
+  }
+  return detailsRecorded(g) ? !!g.blanks : null;
+}
+
+export function gameJokerless(g: GameRecord): Tracked {
+  if (!isWin(g)) return null;
+  if (isAlwaysJokerless(g.hand_id!)) return true;
+  return detailsRecorded(g) ? !!g.jokerless : null;
+}
+
+export function gameSelfDrawn(g: GameRecord): Tracked {
+  if (!isWin(g)) return null;
+  return detailsRecorded(g) ? !!g.self_drawn : null;
+}
+
+export interface DetailStats {
+  trackedWins: number; // wins where self-drawn was asked
+  selfDrawn: number;
+  jokerEligibleTracked: number; // tracked wins on hands that may use jokers
+  noJokers: number;
+  untrackedWins: number;
+  trackedGames: number; // games whose blanks setting is known
+  blanksGames: number;
+}
+
+export function detailStats(records: GameRecord[], rounds: Round[]): DetailStats {
+  const roundById = new Map(rounds.map((r) => [r.id, r]));
+  let trackedWins = 0,
+    selfDrawn = 0,
+    jokerEligibleTracked = 0,
+    noJokers = 0,
+    untrackedWins = 0,
+    trackedGames = 0,
+    blanksGames = 0;
+  for (const g of records) {
+    const b = gameBlanks(g, roundById);
+    if (b !== null) {
+      trackedGames++;
+      if (b) blanksGames++;
+    }
+    if (!isWin(g)) continue;
+    const sd = gameSelfDrawn(g);
+    if (sd === null) {
+      untrackedWins++;
+      continue;
+    }
+    trackedWins++;
+    if (sd) selfDrawn++;
+    if (!isAlwaysJokerless(g.hand_id!)) {
+      jokerEligibleTracked++;
+      if (g.jokerless) noJokers++;
+    }
+  }
+  return { trackedWins, selfDrawn, jokerEligibleTracked, noJokers, untrackedWins, trackedGames, blanksGames };
 }
 
 // ---------------------------------------------------------------------------
@@ -210,48 +463,155 @@ export function totalPoints(records: GameRecord[]): number {
 
 export const GAMES_PER_ROUND = 4;
 
-// Was this game played with blanks? Round games follow their round's setting;
-// single games carry their own.
-export function gameBlanks(g: GameRecord, roundById: Map<string, Round>): boolean {
-  if (g.round_id) return roundById.get(g.round_id)?.blanks ?? false;
-  return !!g.blanks;
-}
+// complete — exactly 4 games · open — still taking games
+// ended — fewer than 4 games and no longer taking any (ended early or superseded)
+export type RoundStatus = "complete" | "open" | "ended";
 
 export interface RoundView {
   round: Round;
   number: number; // 1-based within its day
   games: GameRecord[]; // oldest first
+  status: RoundStatus;
 }
 
 export interface DayRounds {
   rounds: RoundView[];
-  unassigned: GameRecord[]; // games logged before rounds existed
+  unassigned: GameRecord[]; // single games, and games logged before rounds existed
+}
+
+function roundGames(records: GameRecord[]): Map<string, GameRecord[]> {
+  const map = new Map<string, GameRecord[]>();
+  for (const g of records) {
+    if (!g.round_id) continue;
+    if (!map.has(g.round_id)) map.set(g.round_id, []);
+    map.get(g.round_id)!.push(g);
+  }
+  for (const list of map.values()) list.sort(byTimeAsc);
+  return map;
+}
+
+function statusOf(round: Round, count: number, isLatestOfDay: boolean): RoundStatus {
+  if (count >= GAMES_PER_ROUND) return "complete";
+  if (!round.closed_at && isLatestOfDay) return "open";
+  return "ended";
 }
 
 // Rounds (and round-less games) for one local day.
-export function roundsForDay(
-  dayKey: string,
-  rounds: Round[],
-  records: GameRecord[],
-): DayRounds {
+export function roundsForDay(dayKey: string, rounds: Round[], records: GameRecord[]): DayRounds {
   const dayRounds = rounds
     .filter((r) => localDayKey(new Date(r.started_at)) === dayKey)
     .sort((a, b) => (a.started_at < b.started_at ? -1 : 1));
   const roundIds = new Set(rounds.map((r) => r.id));
+  const byRound = roundGames(records);
   const dayGames = records
     .filter((g) => localDayKey(new Date(g.won_at)) === dayKey)
-    .sort((a, b) => (a.won_at < b.won_at ? -1 : 1));
+    .sort(byTimeAsc);
   return {
-    rounds: dayRounds.map((round, i) => ({
-      round,
-      number: i + 1,
-      games: records
-        .filter((g) => g.round_id === round.id)
-        .sort((a, b) => (a.won_at < b.won_at ? -1 : 1)),
-    })),
+    rounds: dayRounds.map((round, i) => {
+      const games = byRound.get(round.id) ?? [];
+      return {
+        round,
+        number: i + 1,
+        games,
+        status: statusOf(round, games.length, i === dayRounds.length - 1),
+      };
+    }),
     unassigned: dayGames.filter((g) => !g.round_id || !roundIds.has(g.round_id)),
   };
 }
+
+// The round on `dayKey` that can take another game, if any.
+export function openRoundForDay(dayKey: string, rounds: Round[], records: GameRecord[]): RoundView | null {
+  const day = roundsForDay(dayKey, rounds, records);
+  const last = day.rounds[day.rounds.length - 1];
+  return last && last.status === "open" ? last : null;
+}
+
+export interface RoundStats {
+  tracked: number; // rounds with at least one game
+  completed: number; // exactly 4 games
+  incomplete: number; // 1–3 games
+  winsInCompleted: number;
+  avgWinsPerCompleted: number | null;
+  completedWithWin: number;
+  completedMultiWin: number;
+  completedWithBlanks: number;
+}
+
+// Built only from explicitly tracked rounds. Older games never join a round.
+export function roundStats(records: GameRecord[], rounds: Round[]): RoundStats {
+  const byRound = roundGames(records);
+  let tracked = 0,
+    completed = 0,
+    incomplete = 0,
+    winsInCompleted = 0,
+    completedWithWin = 0,
+    completedMultiWin = 0,
+    completedWithBlanks = 0;
+  for (const round of rounds) {
+    const games = byRound.get(round.id) ?? [];
+    if (games.length === 0) continue;
+    tracked++;
+    if (games.length !== GAMES_PER_ROUND) {
+      incomplete++;
+      continue;
+    }
+    completed++;
+    const w = games.filter((g) => g.outcome === "win").length;
+    winsInCompleted += w;
+    if (w >= 1) completedWithWin++;
+    if (w >= 2) completedMultiWin++;
+    if (round.blanks) completedWithBlanks++;
+  }
+  return {
+    tracked,
+    completed,
+    incomplete,
+    winsInCompleted,
+    avgWinsPerCompleted: ratio(winsInCompleted, completed),
+    completedWithWin,
+    completedMultiWin,
+    completedWithBlanks,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Day recap (a playing date is the "session" unit; older games have no
+// session ids, so we never invent boundaries inside a day)
+// ---------------------------------------------------------------------------
+
+export interface DayRecap {
+  totals: OutcomeTotals;
+  points: number;
+  uniqueHands: number; // distinct hands won that day
+  firstTimeHands: Hand[]; // hands won for the very first time that day
+  completedRounds: number;
+}
+
+export function dayRecap(
+  dayKey: string,
+  records: GameRecord[],
+  rounds: Round[],
+): DayRecap {
+  const dayGames = records.filter((g) => localDayKey(new Date(g.won_at)) === dayKey);
+  const before = cardYearRecords(records).filter((g) => localDayKey(new Date(g.won_at)) < dayKey);
+  const wonBefore = uniqueHandsWon(before);
+  const dayWon = uniqueHandsWon(cardYearRecords(dayGames));
+  const firstTimeHands = [...dayWon]
+    .filter((id) => !wonBefore.has(id))
+    .map((id) => HAND_BY_ID.get(id)!)
+    .filter(Boolean);
+  const day = roundsForDay(dayKey, rounds, records);
+  return {
+    totals: outcomeTotals(dayGames),
+    points: totalPoints(dayGames),
+    uniqueHands: dayWon.size,
+    firstTimeHands,
+    completedRounds: day.rounds.filter((r) => r.status === "complete").length,
+  };
+}
+
+// ---------------------------------------------------------------------------
 
 // "2h ago", "3d ago", "just now" — compact relative time.
 export function relativeTime(iso: string): string {
