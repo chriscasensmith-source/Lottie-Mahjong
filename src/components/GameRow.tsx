@@ -56,6 +56,16 @@ export function GameRow({ game, index, meta, showDate, onRemove, onToggleBlanks 
                 Self-drawn
               </span>
             )}
+            {game.discarded_winner && (
+              <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-tile-red">
+                Threw it · {gamePoints(game)} pts
+              </span>
+            )}
+            {game.tournament && (
+              <span className="rounded bg-maroon-700 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-cream-50">
+                Tournament
+              </span>
+            )}
           </span>
           {hand && (
             <span className="flex flex-wrap gap-x-1 text-xs font-bold">

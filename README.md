@@ -6,11 +6,15 @@ color-coded hands, point values, and instructions; **rounds of 4 games**
 and **self-drawn**, plus losses and wall games; a calendar of the days you
 played; and stats.
 
-**Scoring** follows NMJL doubling: no jokers ×2 (except Singles & Pairs, which
-are always jokerless), self-drawn ×2.
+**Scoring:** the hand's value from the card, +20 for no jokers (except Singles &
+Pairs, which never use jokers), +10 for self-drawn. In tournament play,
+discarding the winning tile is −10.
+
+**Play modes:** Scramble (rounds of 4 games, never blanks), Single games (with a
+Blanks / No blanks choice), and Tournament (single games, tournament scoring).
 
 **Database:** apply the SQL files in `supabase/migrations/` in order
-(`0001` → `0005`) in the Supabase SQL editor.
+(`0001` → `0006`) in the Supabase SQL editor.
 
 **Tests:** `npm test` runs the stats and round-rule tests (Node's built-in runner, no extra packages).
 
@@ -73,7 +77,7 @@ Keep `id` stable once a hand has wins logged against it, so history is preserved
 
 ## Data model
 
-Two tables (migrations `0001`–`0005` in `supabase/migrations/`, all applied):
+Two tables (migrations `0001`–`0006` in `supabase/migrations/`, all applied):
 
 **`mahjong_wins`**: one row per game (the name is historical).
 
@@ -87,6 +91,8 @@ Two tables (migrations `0001`–`0005` in `supabase/migrations/`, all applied):
 | jokerless, self_drawn, blanks | only meaningful when `details_recorded` is true           |
 | details_recorded | false for games logged before Nov 3, 2026 (those details were never asked) |
 | card_year        | the NMJL card used (2026)                                              |
+| tournament       | true for tournament games                                              |
+| discarded_winner | tournament losses: she threw the winning tile (−10); null = not asked  |
 
 **`mahjong_rounds`**: `id`, `started_at`, `blanks`, `closed_at` (set when a round
 is ended early). A database trigger stops any round from holding more than 4 games.
@@ -107,7 +113,7 @@ All of these live in `src/lib/stats.ts` and are covered by `npm test`.
 | Section wins | every win on a hand in that section, repeats included |
 | Completed round | a tracked round with exactly 4 games |
 | Avg wins per completed round | wins in completed rounds ÷ completed rounds |
-| Hand points | sum of winning-hand values with NMJL doubling; older wins count at base value |
+| Points | winning-hand values (+20 no jokers, +10 self-drawn) minus 10 per tournament discard; older wins count at base value |
 
 Rates show "—" when there's nothing to divide by. Self-drawn, no-joker and blanks
 percentages only count games where the question was actually asked.

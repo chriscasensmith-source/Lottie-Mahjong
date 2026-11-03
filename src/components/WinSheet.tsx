@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { Hand, WinOptions } from "@/lib/types";
-import { isAlwaysJokerless, winPoints } from "@/lib/stats";
+import { JOKERLESS_BONUS, SELF_DRAWN_BONUS, isAlwaysJokerless, winPoints } from "@/lib/stats";
 import { COLOR_CLASS } from "@/components/HandCard";
 
 // Two-option segmented toggle.
@@ -179,8 +179,8 @@ export function WinSheet({ hand, at, roundLabel, onConfirm, onClose }: WinSheetP
             <div className="mt-4 flex items-center justify-between rounded-2xl bg-maroon-50 px-4 py-3 ring-1 ring-maroon-200">
               <span className="text-xs text-maroon-900/70">
                 {pts.base}
-                {pts.jokerlessBonus && " × 2 no jokers"}
-                {selfDrawn && " × 2 self-drawn"}
+                {pts.jokerlessBonus && ` + ${JOKERLESS_BONUS} no jokers`}
+                {pts.selfDrawnBonus && ` + ${SELF_DRAWN_BONUS} self-drawn`}
               </span>
               <motion.span
                 key={pts.total}
