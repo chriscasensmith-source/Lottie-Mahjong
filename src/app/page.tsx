@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { SECTIONS, ALL_HANDS } from "@/data/hands";
 import { useWins } from "@/hooks/useWins";
@@ -10,7 +10,10 @@ import { FilterBar } from "@/components/FilterBar";
 import { HandCard } from "@/components/HandCard";
 import { StatsView } from "@/components/StatsView";
 import { CalendarView } from "@/components/CalendarView";
-import type { Hand, HandFilter } from "@/lib/types";
+import { RoundBar } from "@/components/RoundBar";
+import { WinSheet } from "@/components/WinSheet";
+import { winPoints, GAMES_PER_ROUND } from "@/lib/stats";
+import type { GameOutcome, Hand, HandFilter, WinOptions } from "@/lib/types";
 
 type View = "hands" | "stats" | "calendar";
 
@@ -23,11 +26,7 @@ const VIEW_LABEL: Record<View, string> = {
 function handMatches(hand: Hand, sectionName: string, q: string): boolean {
   if (!q) return true;
   const haystack = (
-    sectionName +
-    " " +
-    hand.description +
-    " " +
-    hand.pattern.map((p) => p.text).join(" ")
+    sectionName + " " + hand.description + " " + hand.pattern.map((p) => p.text).join(" ")
   ).toLowerCase();
   return haystack.includes(q);
 }
@@ -35,13 +34,20 @@ function handMatches(hand: Hand, sectionName: string, q: string): boolean {
 export default function Home() {
   const {
     records,
+    rounds,
     counts,
     loading,
     totalWins,
     playedCount,
+    currentRound,
+    nextRoundNumber,
+    defaultBlanks,
     logWin,
     logLoss,
     logWall,
+    startRound,
+    setRoundBlanks,
+    removeRound,
     undoWin,
     removeGame,
     status,
@@ -52,31 +58,57 @@ export default function Home() {
   const [view, setView] = useState<View>("hands");
   const [filter, setFilter] = useState<HandFilter>("all");
   const [query, setQuery] = useState("");
-  const [toast, setToast] = useState<{
-    label: string;
-    outcome: "loss" | "wall";
-  } | null>(null);
+  const [toast, setToast] = useState<{ label: string; undo?: () => void } | null>(null);
+  const [winTarget, setWinTarget] = useState<{ hand: Hand; at?: Date } | null>(null);
+  const [celebrate, setCelebrate] = useState<{ handId: string; key: number }>({ handId: "", key: 0 });
+
+  // Blanks choice for a round that hasn't started yet (follows the last round's setting).
+  const [pendingBlanks, setPendingBlanks] = useState(false);
+  useEffect(() => {
+    if (!currentRound) setPendingBlanks(defaultBlanks);
+  }, [defaultBlanks, currentRound]);
 
   const q = query.trim().toLowerCase();
 
-  function recordResult(kind: "loss" | "wall") {
-    if (kind === "loss") logLoss();
-    else logWall();
-    setToast({
-      label: kind === "loss" ? "Loss recorded" : "Wall game recorded",
-      outcome: kind,
-    });
-    window.setTimeout(() => setToast(null), 5000);
+  function showToast(label: string, undo?: () => void) {
+    setToast({ label, undo });
+    window.setTimeout(() => setToast((t) => (t?.label === label ? null : t)), 5000);
   }
 
-  function undoToast() {
-    if (!toast) return;
+  function undoLatest(outcome: GameOutcome) {
     const last = records
-      .filter((r) => r.outcome === toast.outcome)
+      .filter((r) => r.outcome === outcome)
       .sort((a, b) => (a.won_at < b.won_at ? 1 : -1))[0];
     if (last) removeGame(last);
-    setToast(null);
   }
+
+  function recordResult(kind: "loss" | "wall") {
+    const opts = { newRoundBlanks: pendingBlanks };
+    if (kind === "loss") logLoss(opts);
+    else logWall(opts);
+    showToast(kind === "loss" ? "Loss recorded" : "Wall game recorded", () => undoLatest(kind));
+  }
+
+  function confirmWin(opts: WinOptions) {
+    if (!winTarget) return;
+    const { hand, at } = winTarget;
+    logWin(hand.id, {
+      at,
+      jokerless: opts.jokerless,
+      selfDrawn: opts.selfDrawn,
+      newRoundBlanks: pendingBlanks,
+    });
+    setCelebrate((c) => ({ handId: hand.id, key: c.key + 1 }));
+    const pts = winPoints(hand.id, opts).total;
+    showToast(`Win logged · +${pts} pts`, () => undoWin(hand.id));
+    setWinTarget(null);
+  }
+
+  const winRoundLabel = winTarget?.at
+    ? "Adds to that day's round"
+    : currentRound
+      ? `Round ${currentRound.number} · Game ${currentRound.games.length + 1} of ${GAMES_PER_ROUND}`
+      : `Starts Round ${nextRoundNumber}`;
 
   const sections = useMemo(() => {
     return SECTIONS.map((section) => {
@@ -91,104 +123,90 @@ export default function Home() {
   }, [counts, filter, q]);
 
   function jumpTo(id: string) {
-    document
-      .getElementById(`sec-${id}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById(`sec-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   return (
-    <main className="felt-texture mx-auto min-h-dvh max-w-6xl px-4 pb-20 pt-8 sm:px-6">
-      {/* Transient confirmation toast */}
+    <main className="paper-texture mx-auto min-h-dvh max-w-6xl px-4 pb-20 pt-6 sm:px-6">
+      <WinSheet
+        hand={winTarget?.hand ?? null}
+        at={winTarget?.at}
+        roundLabel={winRoundLabel}
+        onConfirm={confirmWin}
+        onClose={() => setWinTarget(null)}
+      />
+
+      {/* Transient confirmation toast with Undo */}
       <AnimatePresence>
         {toast && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-stone-900/90 py-2 pl-4 pr-2 text-sm font-medium text-white shadow-lg ring-1 ring-white/10 backdrop-blur"
+            className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full bg-maroon-800 py-2 pl-4 pr-2 text-sm font-medium text-cream-50 shadow-lg"
           >
             <span>{toast.label}</span>
-            <button
-              onClick={undoToast}
-              className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-white/25"
-            >
-              Undo
-            </button>
+            {toast.undo && (
+              <button
+                onClick={() => {
+                  toast.undo?.();
+                  setToast(null);
+                }}
+                className="rounded-full bg-cream-50/15 px-3 py-1 text-xs font-semibold hover:bg-cream-50/25"
+              >
+                Undo
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Header */}
+      {/* Masthead */}
       <header className="flex flex-col items-center gap-5 text-center">
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
+          className="w-full rounded-3xl bg-maroon-700 px-6 pb-5 pt-6 text-cream-50 shadow-[0_10px_30px_rgba(52,8,17,0.18)]"
         >
-          <h1 className="text-4xl font-black tracking-tight sm:text-5xl">
-            🀄 Lottie Mahjong
-          </h1>
-          <p className="mt-1 text-emerald-100/70">
-            Track the hands you&apos;ve played and won.
+          <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-cream-200/70">
+            🀄 2026 NMJL card
           </p>
+          <h1 className="mt-1 font-display text-4xl font-bold tracking-tight sm:text-5xl">
+            The Mahj Journal
+          </h1>
+          <p className="mt-1 text-sm text-cream-100/75">Your hands, rounds &amp; wins.</p>
+
+          {/* View switcher */}
+          <div className="mt-4 inline-flex rounded-full bg-maroon-900/40 p-1">
+            {(["hands", "stats", "calendar"] as View[]).map((v) => {
+              const active = view === v;
+              return (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className="relative rounded-full px-4 py-1.5 text-sm font-semibold sm:px-5"
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="view-pill"
+                      className="absolute inset-0 rounded-full bg-cream-100"
+                      transition={{ type: "spring", stiffness: 500, damping: 32 }}
+                    />
+                  )}
+                  <span className={`relative z-10 ${active ? "text-maroon-800" : "text-cream-100/80"}`}>
+                    {VIEW_LABEL[v]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </motion.div>
 
-        {/* View switcher */}
-        <div className="inline-flex rounded-full bg-black/25 p-1 backdrop-blur">
-          {(["hands", "stats", "calendar"] as View[]).map((v) => {
-            const active = view === v;
-            return (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className="relative rounded-full px-4 py-1.5 text-sm font-semibold capitalize sm:px-5"
-              >
-                {active && (
-                  <motion.span
-                    layoutId="view-pill"
-                    className="absolute inset-0 rounded-full bg-emerald-400"
-                    transition={{ type: "spring", stiffness: 500, damping: 32 }}
-                  />
-                )}
-                <span
-                  className={`relative z-10 ${
-                    active ? "text-emerald-950" : "text-emerald-100/80"
-                  }`}
-                >
-                  {VIEW_LABEL[v]}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <StatsBar
-          totalHands={ALL_HANDS.length}
-          playedCount={playedCount}
-          totalWins={totalWins}
-        />
-
-        {/* Record a non-win game result */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-emerald-100/50">Didn&apos;t win?</span>
-          <button
-            onClick={() => recordResult("loss")}
-            className="rounded-full bg-rose-500/15 px-3 py-1.5 text-sm font-semibold text-rose-200 ring-1 ring-rose-400/30 transition-colors hover:bg-rose-500/25"
-          >
-            ❌ Log loss
-          </button>
-          <button
-            onClick={() => recordResult("wall")}
-            className="rounded-full bg-amber-500/15 px-3 py-1.5 text-sm font-semibold text-amber-200 ring-1 ring-amber-400/30 transition-colors hover:bg-amber-500/25"
-          >
-            🧱 Wall game
-          </button>
-        </div>
-
-        <p className="text-xs text-emerald-100/40">
+        <p className="text-xs text-maroon-900/50">
           {status === "online"
             ? "✓ Synced to Supabase"
             : status === "loading"
-              ? "Connecting to your saved data…"
+              ? "Opening your journal…"
               : status === "offline"
                 ? "Saved on this device (offline mode)"
                 : "⚠️ Not connected"}
@@ -202,21 +220,18 @@ export default function Home() {
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            className="mx-auto mt-6 max-w-2xl rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4 text-center backdrop-blur"
+            className="mx-auto mt-4 max-w-2xl rounded-2xl bg-outcome-wall-soft p-4 text-center ring-1 ring-outcome-wall/40"
           >
-            <p className="font-semibold text-amber-100">
+            <p className="font-semibold text-outcome-wall-ink">
               Couldn&apos;t reach your saved data — but it&apos;s not lost.
             </p>
-            <p className="mt-1 text-sm text-amber-100/70">
-              The database didn&apos;t respond. Your games are safe in Supabase;
-              this is just a connection issue.
+            <p className="mt-1 text-sm text-outcome-wall-ink/80">
+              Your games are safe in Supabase; this is just a connection issue.
             </p>
-            {errorMsg && (
-              <p className="mt-1 text-xs text-amber-100/50">({errorMsg})</p>
-            )}
+            {errorMsg && <p className="mt-1 text-xs text-outcome-wall-ink/60">({errorMsg})</p>}
             <button
               onClick={reload}
-              className="mt-3 rounded-full bg-amber-400 px-4 py-1.5 text-sm font-semibold text-amber-950 transition-colors hover:bg-amber-300"
+              className="mt-3 rounded-full bg-maroon-700 px-4 py-1.5 text-sm font-semibold text-cream-50 hover:bg-maroon-800"
             >
               Retry
             </button>
@@ -226,19 +241,38 @@ export default function Home() {
 
       {/* Body */}
       {loading ? (
-        <div className="mt-20 text-center text-emerald-100/60">Loading…</div>
+        <div className="mt-20 text-center font-display text-maroon-900/50">Opening your journal…</div>
       ) : view === "stats" ? (
-        <StatsView records={records} removeGame={removeGame} />
+        <StatsView records={records} rounds={rounds} removeGame={removeGame} />
       ) : view === "calendar" ? (
         <CalendarView
           records={records}
+          rounds={rounds}
+          defaultBlanks={defaultBlanks}
           removeGame={removeGame}
-          logWin={logWin}
+          removeRound={removeRound}
+          setRoundBlanks={setRoundBlanks}
+          startRound={startRound}
           logLoss={logLoss}
           logWall={logWall}
+          onRequestWin={(hand, at) => setWinTarget({ hand, at })}
         />
       ) : (
         <>
+          <div className="mt-5 flex flex-col items-center gap-5">
+            <RoundBar
+              currentRound={currentRound}
+              nextRoundNumber={nextRoundNumber}
+              pendingBlanks={pendingBlanks}
+              onPendingBlanks={setPendingBlanks}
+              onToggleBlanks={setRoundBlanks}
+              onLoss={() => recordResult("loss")}
+              onWall={() => recordResult("wall")}
+              onNewRound={() => startRound({ blanks: currentRound?.round.blanks ?? pendingBlanks })}
+            />
+            <StatsBar totalHands={ALL_HANDS.length} playedCount={playedCount} totalWins={totalWins} />
+          </div>
+
           {/* Controls */}
           <div className="mt-8 flex flex-col items-center gap-3">
             <div className="flex flex-wrap items-center justify-center gap-3">
@@ -248,7 +282,7 @@ export default function Home() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search hands…"
-                className="w-56 rounded-full border border-white/15 bg-black/20 px-4 py-2 text-sm text-emerald-50 placeholder:text-emerald-100/40 outline-none backdrop-blur focus:border-emerald-400"
+                className="w-56 rounded-full border border-maroon-900/15 bg-cream-50 px-4 py-2 text-sm text-maroon-900 placeholder:text-maroon-900/40 outline-none focus:border-maroon-500"
               />
             </div>
 
@@ -258,7 +292,7 @@ export default function Home() {
                 <button
                   key={s.id}
                   onClick={() => jumpTo(s.id)}
-                  className="rounded-full bg-white/5 px-2.5 py-1 text-xs font-medium text-emerald-100/70 ring-1 ring-white/10 transition-colors hover:bg-white/15 hover:text-white"
+                  className="rounded-full bg-cream-50 px-2.5 py-1 text-xs font-medium text-maroon-800/80 ring-1 ring-maroon-900/10 transition-colors hover:bg-maroon-700 hover:text-cream-50"
                 >
                   {s.name}
                 </button>
@@ -278,20 +312,11 @@ export default function Home() {
                   exit={{ opacity: 0 }}
                   className="scroll-mt-4"
                 >
-                  <div className="mb-3 flex items-baseline gap-3">
-                    <h2 className={`text-2xl font-bold ${section.accentClass}`}>
-                      {section.name}
-                    </h2>
-                    {section.note && (
-                      <span className="text-sm text-emerald-100/50">
-                        {section.note}
-                      </span>
-                    )}
+                  <div className="mb-3 flex items-center gap-3">
+                    <h2 className="font-display text-2xl font-bold text-maroon-700">{section.name}</h2>
+                    <span className="h-px flex-1 bg-maroon-900/15" />
                   </div>
-                  <motion.div
-                    layout
-                    className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
-                  >
+                  <motion.div layout className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <AnimatePresence mode="popLayout">
                       {section.hands.map((hand) => (
                         <HandCard
@@ -299,7 +324,8 @@ export default function Home() {
                           hand={hand}
                           winCount={counts[hand.id] ?? 0}
                           note={notes[hand.id] ?? ""}
-                          onLogWin={logWin}
+                          celebrateKey={celebrate.handId === hand.id ? celebrate.key : 0}
+                          onRequestWin={(h) => setWinTarget({ hand: h })}
                           onUndo={undoWin}
                           onNoteChange={setNote}
                         />
@@ -311,17 +337,15 @@ export default function Home() {
             </AnimatePresence>
 
             {sections.length === 0 && (
-              <div className="mt-20 text-center text-emerald-100/60">
-                No hands match this filter.
-              </div>
+              <div className="mt-20 text-center text-maroon-900/50">No hands match this filter.</div>
             )}
           </div>
         </>
       )}
 
-      <footer className="mt-16 text-center text-xs text-emerald-100/30">
-        2026 National Mah Jongg League card · {ALL_HANDS.length} hands ·
-        made for Lottie 🀄
+      <footer className="mt-16 text-center text-xs text-maroon-900/40">
+        The Mahj Journal · 2026 National Mah Jongg League card · {ALL_HANDS.length} hands · made
+        for Lottie 🀄
       </footer>
     </main>
   );

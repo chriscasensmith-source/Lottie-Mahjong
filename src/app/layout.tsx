@@ -2,8 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Lottie Mahjong — Hand Tracker",
-  description: "Track the American Mahjong hands you've played and won.",
+  title: "The Mahj Journal",
+  description:
+    "A journal for your American Mahjong games — hands, rounds, wins, and stats.",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -14,13 +15,13 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: "Lottie Mahjong",
-    statusBarStyle: "black-translucent",
+    title: "Mahj Journal",
+    statusBarStyle: "default",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0a3d26",
+  themeColor: "#5E1020",
   width: "device-width",
   initialScale: 1,
 };
@@ -32,7 +33,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="font-display antialiased">{children}</body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

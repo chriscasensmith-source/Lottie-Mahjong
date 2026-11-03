@@ -44,6 +44,22 @@ export interface GameRecord {
   hand_id: string | null;
   outcome: GameOutcome;
   won_at: string; // ISO timestamp of the game
+  round_id?: string | null; // the round this game belongs to (null = legacy)
+  jokerless?: boolean; // won without jokers ("No jokers")
+  self_drawn?: boolean; // drew your own Mahjong tile
+}
+
+// A round: up to 4 games played together, with a blanks house-rule flag.
+export interface Round {
+  id: string;
+  started_at: string; // ISO timestamp
+  blanks: boolean;
+}
+
+// Options captured when logging a win.
+export interface WinOptions {
+  jokerless: boolean;
+  selfDrawn: boolean;
 }
 
 export type HandFilter = "all" | "played" | "unplayed";

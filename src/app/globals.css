@@ -3,38 +3,35 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
-  @apply text-emerald-50;
+  @apply text-maroon-900;
   background:
-    radial-gradient(1200px 600px at 50% -10%, #15734a 0%, transparent 60%),
-    linear-gradient(180deg, #0a3d26 0%, #072a1a 100%);
-  background-color: #072a1a;
+    radial-gradient(900px 500px at 50% -10%, #fffdf8 0%, transparent 70%),
+    linear-gradient(180deg, #faf4e7 0%, #f3ead6 100%);
+  background-color: #f3ead6;
   min-height: 100dvh;
 }
 
-/* Felt-table texture: subtle repeating dots. */
-.felt-texture {
-  background-image: radial-gradient(
-    rgba(255, 255, 255, 0.04) 1px,
-    transparent 1px
-  );
-  background-size: 14px 14px;
+/* Soft paper grain on the cream background. */
+.paper-texture {
+  background-image: radial-gradient(rgba(94, 16, 32, 0.045) 1px, transparent 1px);
+  background-size: 16px 16px;
 }
 
-/* Thin scrollbars that suit the dark theme. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  scrollbar-color: rgba(94, 16, 32, 0.25) transparent;
 }
 
 /* Clear keyboard-focus ring for accessibility. */
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid #34d399;
+  outline: 2px solid #8c2136;
   outline-offset: 2px;
 }

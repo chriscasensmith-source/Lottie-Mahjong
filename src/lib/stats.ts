@@ -1,5 +1,5 @@
 import { ALL_HANDS, SECTIONS } from "@/data/hands";
-import type { GameOutcome, GameRecord, Hand } from "@/lib/types";
+import type { GameOutcome, GameRecord, Hand, Round } from "@/lib/types";
 
 // hand id -> hand, and hand id -> its section (id + display name).
 const HAND_BY_ID = new Map<string, Hand>(ALL_HANDS.map((h) => [h.id, h]));
@@ -164,11 +164,86 @@ export function recentActivity(
     }));
 }
 
-// Total points scored across winning hands.
+// ---------------------------------------------------------------------------
+// Scoring (NMJL-style)
+//   - Jokerless ("No jokers") doubles the hand value — except Singles & Pairs,
+//     which can never use jokers and so get no bonus.
+//   - Self-drawn (you drew your own Mahjong) doubles again.
+// ---------------------------------------------------------------------------
+
+// Singles & Pairs hands can't use jokers at all.
+export function isAlwaysJokerless(handId: string): boolean {
+  return HAND_SECTION.get(handId)?.id === "singles-pairs";
+}
+
+export function winPoints(
+  handId: string,
+  opts: { jokerless: boolean; selfDrawn: boolean },
+): { base: number; total: number; jokerlessBonus: boolean } {
+  const base = HAND_BY_ID.get(handId)?.points ?? 0;
+  const jokerlessBonus = opts.jokerless && !isAlwaysJokerless(handId);
+  let total = base;
+  if (jokerlessBonus) total *= 2;
+  if (opts.selfDrawn) total *= 2;
+  return { base, total, jokerlessBonus };
+}
+
+// Points a single game is worth (0 for losses and walls).
+export function gamePoints(r: GameRecord): number {
+  if (r.outcome !== "win" || !r.hand_id) return 0;
+  return winPoints(r.hand_id, {
+    jokerless: !!r.jokerless,
+    selfDrawn: !!r.self_drawn,
+  }).total;
+}
+
+// Total points scored across winning hands, with multipliers.
 export function totalPoints(records: GameRecord[]): number {
   let sum = 0;
-  for (const r of wins(records)) sum += HAND_BY_ID.get(r.hand_id!)?.points ?? 0;
+  for (const r of records) sum += gamePoints(r);
   return sum;
+}
+
+// ---------------------------------------------------------------------------
+// Rounds
+// ---------------------------------------------------------------------------
+
+export const GAMES_PER_ROUND = 4;
+
+export interface RoundView {
+  round: Round;
+  number: number; // 1-based within its day
+  games: GameRecord[]; // oldest first
+}
+
+export interface DayRounds {
+  rounds: RoundView[];
+  unassigned: GameRecord[]; // games logged before rounds existed
+}
+
+// Rounds (and round-less games) for one local day.
+export function roundsForDay(
+  dayKey: string,
+  rounds: Round[],
+  records: GameRecord[],
+): DayRounds {
+  const dayRounds = rounds
+    .filter((r) => localDayKey(new Date(r.started_at)) === dayKey)
+    .sort((a, b) => (a.started_at < b.started_at ? -1 : 1));
+  const roundIds = new Set(rounds.map((r) => r.id));
+  const dayGames = records
+    .filter((g) => localDayKey(new Date(g.won_at)) === dayKey)
+    .sort((a, b) => (a.won_at < b.won_at ? -1 : 1));
+  return {
+    rounds: dayRounds.map((round, i) => ({
+      round,
+      number: i + 1,
+      games: records
+        .filter((g) => g.round_id === round.id)
+        .sort((a, b) => (a.won_at < b.won_at ? -1 : 1)),
+    })),
+    unassigned: dayGames.filter((g) => !g.round_id || !roundIds.has(g.round_id)),
+  };
 }
 
 // "2h ago", "3d ago", "just now" — compact relative time.
