@@ -19,6 +19,11 @@ import {
   sectionStats,
   topHands,
   totalPoints,
+  pointsBreakdown,
+  tournamentStats,
+  JOKERLESS_BONUS,
+  SELF_DRAWN_BONUS,
+  DISCARD_PENALTY,
   ratio,
   MILESTONES,
   type OutcomeBucket,
@@ -217,6 +222,8 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
       o: outcomeTotals(records),
       recent: recentDecisiveRate(records, 50),
       points: totalPoints(records),
+      pts: pointsBreakdown(records),
+      tour: tournamentStats(records),
       sections: sectionStats(card),
       top: topHands(card, 6),
       activity: recentActivity(records, 10),
@@ -261,7 +268,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
           { label: "Wins", value: o.win },
           { label: "Losses", value: o.loss },
           { label: "Wall games", value: o.wall },
-          { label: "Hand points", value: s.points, wide: true },
+          { label: "Points", value: s.points, wide: true },
         ].map((t, i) => (
           <motion.div
             key={t.label}
@@ -276,7 +283,10 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         ))}
       </div>
       <p className="-mt-1 px-1 text-xs text-maroon-900/70">
-        All time. Games = wins + losses + wall games. Hand points add up the value of each winning hand.
+        All time. Games = wins + losses + wall games. Points = winning hands
+        {s.pts.penalties > 0
+          ? ` (${fmtNum(s.pts.handPoints)}) minus ${s.pts.penalties} tournament discard${s.pts.penalties === 1 ? "" : "s"} (−${fmtNum(s.pts.penaltyPoints)}).`
+          : "."}
       </p>
 
       {/* Win rates */}
@@ -449,7 +459,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         </Card>
 
         {/* Rounds */}
-        <Card title="Rounds" subtitle="Only rounds tracked with the 4-game round feature">
+        <Card title="Scramble rounds" subtitle="Only rounds tracked with the 4-game round feature">
           {r.completed === 0 ? (
             <div className="rounded-2xl bg-cream-100 p-4 text-sm text-maroon-900/85">
               <p className="font-semibold text-maroon-900">No completed rounds yet.</p>
@@ -480,12 +490,6 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
                 detail={`${r.completedMultiWin} of ${r.completed}`}
                 explain="Completed rounds where you won two or more games."
               />
-              <Metric
-                label="Played with blanks"
-                value={fmtNum(r.completedWithBlanks)}
-                detail={`of ${r.completed} completed rounds`}
-                explain="Completed rounds set to Blanks."
-              />
             </div>
           )}
           <p className="mt-3 text-xs text-maroon-900/75">
@@ -512,7 +516,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
               label="Games with blanks"
               value={d.trackedGames ? fmtPct(ratio(d.blanksGames, d.trackedGames), 0) : "—"}
               detail={d.trackedGames ? `${d.blanksGames} of ${d.trackedGames} tracked games` : "None tracked yet"}
-              explain="Round games use their round's setting."
+              explain="Single games only. Scramble and tournament games never use blanks."
             />
           </div>
           {d.untrackedWins > 0 && (
@@ -520,6 +524,42 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
               Tracking starts with newer games. {fmtNum(d.untrackedWins)} earlier win{d.untrackedWins === 1 ? " was" : "s were"} logged
               before these questions existed, so they&apos;re left out here instead of counted as &ldquo;no.&rdquo;
             </p>
+          )}
+        </Card>
+
+        {/* Tournament */}
+        <Card title="Tournament" subtitle="Single games played under tournament scoring" className="lg:col-span-2">
+          {s.tour.totals.total === 0 ? (
+            <p className="rounded-2xl bg-cream-100 p-4 text-sm text-maroon-900/85">
+              No tournament games yet. Switch Today to <span className="font-semibold">Tournament</span> to log them.
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <Metric
+                label="Tournament points"
+                value={fmtNum(s.tour.points.net)}
+                detail={`${fmtNum(s.tour.points.handPoints)} won − ${fmtNum(s.tour.points.penaltyPoints)} discards`}
+                explain="Winning hands minus 10 each time you threw the winning tile."
+              />
+              <Metric
+                label="Games"
+                value={fmtNum(s.tour.totals.total)}
+                detail={`${s.tour.totals.win} wins · ${s.tour.totals.loss} losses · ${s.tour.totals.wall} walls`}
+                explain="Every tournament game logged."
+              />
+              <Metric
+                label="Decisive win rate"
+                value={fmtPct(s.tour.totals.decisiveRate)}
+                detail={`${s.tour.totals.win} of ${s.tour.totals.decided} decided games`}
+                explain="Tournament wins out of games that had a winner."
+              />
+              <Metric
+                label="Threw the winner"
+                value={fmtNum(s.tour.points.penalties)}
+                detail={`of ${s.tour.totals.loss} tournament losses`}
+                explain="Losses where you discarded the winning tile."
+              />
+            </div>
           )}
         </Card>
 
@@ -532,7 +572,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
               { label: "Unique hands won", value: `${s.progress.won} of ${s.progress.total}` },
               { label: "Card complete", value: `${Math.round(s.progress.pct * 100)}%` },
               { label: "Sections complete", value: `${s.progress.sectionsComplete.length} of ${s.sections.length}` },
-              { label: "Hand points", value: fmtNum(s.cardPoints) },
+              { label: "Points", value: fmtNum(s.cardPoints) },
             ].map((t) => (
               <div key={t.label} className="rounded-2xl bg-cream-100 p-3 ring-1 ring-maroon-900/5">
                 <div className="font-display text-xl font-bold tabular-nums text-maroon-700">{t.value}</div>
@@ -589,7 +629,8 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
       </div>
 
       <p className="px-1 text-center text-xs text-maroon-900/70">
-        Points use NMJL doubling: no jokers ×2 (except Singles &amp; Pairs), self-drawn ×2. Wins logged before those details were
+        Scoring: hand value from the card, +{JOKERLESS_BONUS} for no jokers (not Singles &amp; Pairs), +{SELF_DRAWN_BONUS} for
+        self-drawn, and −{DISCARD_PENALTY} for discarding the winning tile in a tournament. Wins logged before those details were
         tracked count at the hand&apos;s base value.
       </p>
     </div>

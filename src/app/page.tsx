@@ -14,9 +14,14 @@ import { RoundBar } from "@/components/RoundBar";
 import { WinSheet } from "@/components/WinSheet";
 import { CardChallenge } from "@/components/CardChallenge";
 import { RecapSheet } from "@/components/RecapSheet";
+import { HandPicker } from "@/components/HandPicker";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
+  DISCARD_PENALTY,
   GAMES_PER_ROUND,
   cardProgress,
+  gamePoints,
+  handById,
   cardYearRecords,
   dayRecap,
   localDayKey,
@@ -66,6 +71,16 @@ interface Toast {
   undo?: () => void;
 }
 
+// "Win · 2468 · Oct 31, 7:42 PM" — what the delete dialog is about to remove.
+function describeGame(g: GameRecord): string {
+  const when = new Date(g.won_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const hand = g.hand_id ? handById(g.hand_id) : null;
+  const what =
+    g.outcome === "win" ? `Win${hand ? ` · ${hand.pattern.map((p) => p.text).join(" ")}` : ""}` : g.outcome === "loss" ? "Loss" : "Wall game";
+  const pts = gamePoints(g);
+  return `${what}${pts ? ` (${pts > 0 ? "+" : ""}${pts} pts)` : ""} · ${when}`;
+}
+
 function handMatches(hand: Hand, sectionName: string, q: string): boolean {
   if (!q) return true;
   const haystack = (
@@ -84,11 +99,9 @@ export default function Home() {
     todayRound,
     currentRound,
     nextRoundNumber,
-    defaultBlanks,
     logWin,
     logLoss,
     logWall,
-    setRoundBlanks,
     endRound,
     removeRound,
     setGameBlanks,
@@ -111,17 +124,15 @@ export default function Home() {
   const [celebrate, setCelebrate] = useState<{ handId: string; key: number }>({ handId: "", key: 0 });
   const [recapDay, setRecapDay] = useState<string | null>(null);
 
-  // Blanks choice for a round that hasn't started yet (follows the last round's setting).
-  const [pendingBlanks, setPendingBlanks] = useState(false);
-  useEffect(() => {
-    if (!currentRound) setPendingBlanks(defaultBlanks);
-  }, [defaultBlanks, currentRound]);
+  const [picking, setPicking] = useState(false); // the Win button's hand picker
+  const [pendingDelete, setPendingDelete] = useState<GameRecord | null>(null);
 
-  // Rounds vs single games, and blanks for single games — remembered per device.
-  const [mode, setModeState] = useState<PlayMode>("rounds");
+  // Scramble / single games / tournament, and blanks for single games — remembered per device.
+  const [mode, setModeState] = useState<PlayMode>("scramble");
   const [singleBlanks, setSingleBlanksState] = useState(false);
   useEffect(() => {
-    setModeState(readPref<PlayMode>(MODE_KEY, "rounds"));
+    const saved = readPref<string>(MODE_KEY, "scramble");
+    setModeState(saved === "single" || saved === "tournament" ? saved : "scramble"); // old "rounds" = scramble
     setSingleBlanksState(readPref<boolean>(SINGLE_BLANKS_KEY, false));
   }, []);
   const setMode = (m: PlayMode) => {
@@ -132,8 +143,8 @@ export default function Home() {
     setSingleBlanksState(b);
     writePref(SINGLE_BLANKS_KEY, b);
   };
-  const single = mode === "single";
-  const modeOpts: LogOptions = single ? { single: true, blanks: singleBlanks } : { newRoundBlanks: pendingBlanks };
+  const modeOpts: LogOptions =
+    mode === "single" ? { single: true, blanks: singleBlanks } : mode === "tournament" ? { tournament: true } : {};
 
   // ---- derived ---------------------------------------------------------------
   const cardRecords = useMemo(() => cardYearRecords(records), [records]);
@@ -143,10 +154,16 @@ export default function Home() {
   const lastWonById = useMemo(() => new Map(handStats.map((h) => [h.hand.id, h.lastWon])), [handStats]);
   const todayKey = localDayKey(new Date());
   const todayDay = useMemo(() => roundsForDay(todayKey, rounds, records), [todayKey, rounds, records]);
-  const todayTotals = useMemo(
-    () => outcomeTotals(records.filter((r) => localDayKey(new Date(r.won_at)) === todayKey)),
+  const todayGames = useMemo(
+    () =>
+      records
+        .filter((r) => localDayKey(new Date(r.won_at)) === todayKey)
+        .sort((a, b) => (a.won_at < b.won_at ? -1 : 1)),
     [records, todayKey],
   );
+  const todayTotals = useMemo(() => outcomeTotals(todayGames), [todayGames]);
+  const todaySingles = useMemo(() => todayDay.unassigned.filter((g) => !g.tournament), [todayDay]);
+  const todayTournament = useMemo(() => todayGames.filter((g) => g.tournament), [todayGames]);
   const recap = useMemo(() => (recapDay ? dayRecap(recapDay, records, rounds) : null), [recapDay, records, rounds]);
 
   // ---- toasts ----------------------------------------------------------------
@@ -175,16 +192,29 @@ export default function Home() {
     return false;
   }
 
-  function recordResult(kind: "loss" | "wall") {
+  function recordResult(kind: "loss" | "threw" | "wall") {
     if (tooSoon(kind)) return;
-    const record = kind === "loss" ? logLoss(modeOpts) : logWall(modeOpts);
+    const record =
+      kind === "wall" ? logWall(modeOpts) : logLoss({ ...modeOpts, discardedWinner: kind === "threw" });
     if (!record) return;
     showToast({
-      label: kind === "loss" ? "Loss recorded" : "Wall game recorded",
+      label: kind === "wall" ? "Wall game recorded" : kind === "threw" ? `Loss recorded · −${DISCARD_PENALTY} pts` : "Loss recorded",
       detail: roundNote(modeOpts, record),
       undo: () => removeGame(record),
     });
   }
+
+  // Every delete goes through "Are you sure?" first.
+  function askDelete(game: GameRecord) {
+    setPendingDelete(game);
+  }
+  function askDeleteLastWin(handId: string) {
+    const last = records
+      .filter((r) => r.hand_id === handId && r.outcome === "win")
+      .sort((a, b) => (a.won_at < b.won_at ? 1 : -1))[0];
+    if (last) setPendingDelete(last);
+  }
+  const deleteLabel = pendingDelete ? describeGame(pendingDelete) : "";
 
   function requestWin(hand: Hand, opts?: LogOptions, label?: string) {
     setWinTarget({ hand, opts, label });
@@ -222,9 +252,11 @@ export default function Home() {
 
   const winRoundLabel = winTarget?.label
     ? winTarget.label
-    : single
+    : mode === "single"
       ? `Single game · ${singleBlanks ? "Blanks" : "No blanks"}`
-      : currentRound
+      : mode === "tournament"
+        ? "Tournament game"
+        : currentRound
         ? `Round ${currentRound.number} · Game ${currentRound.games.length + 1} of ${GAMES_PER_ROUND}`
         : `Starts Round ${nextRoundNumber}`;
 
@@ -296,6 +328,31 @@ export default function Home() {
           onClose={() => setWinTarget(null)}
         />
         <RecapSheet dayKey={recapDay} recap={recap} onClose={() => setRecapDay(null)} />
+        <HandPicker
+          open={picking}
+          recent={handStats.slice(0, 6).map((h) => h.hand)}
+          onPick={(h) => {
+            setPicking(false);
+            requestWin(h);
+          }}
+          onClose={() => setPicking(false)}
+        />
+        <ConfirmDialog
+          open={!!pendingDelete}
+          title="Delete this game?"
+          body={
+            <>
+              <p className="font-semibold text-maroon-900">{deleteLabel}</p>
+              <p className="mt-1">It will be removed from your stats and calendar. This can&apos;t be undone.</p>
+            </>
+          }
+          confirmLabel="Delete game"
+          onConfirm={() => {
+            if (pendingDelete) removeGame(pendingDelete);
+            setPendingDelete(null);
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
 
         {/* Toast with Undo */}
         <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4" aria-live="polite">
@@ -426,23 +483,24 @@ export default function Home() {
             Your {view === "stats" ? "stats" : "calendar"} will appear as soon as the journal opens.
           </p>
         ) : view === "stats" ? (
-          <StatsView records={records} rounds={rounds} removeGame={removeGame} />
+          <StatsView records={records} rounds={rounds} removeGame={askDelete} />
         ) : view === "calendar" ? (
           <CalendarView
             records={records}
             rounds={rounds}
             singleBlanks={singleBlanks}
             onSingleBlanks={setSingleBlanks}
-            defaultBlanks={defaultBlanks}
             setGameBlanks={setGameBlanks}
-            removeGame={removeGame}
+            removeGame={askDelete}
             removeRound={removeRound}
             endRound={endRound}
-            setRoundBlanks={setRoundBlanks}
             onLog={(kind, opts) => {
-              const record = kind === "loss" ? logLoss(opts) : logWall(opts);
+              const record = kind === "wall" ? logWall(opts) : logLoss(opts);
               if (record)
-                showToast({ label: kind === "loss" ? "Loss added" : "Wall game added", undo: () => removeGame(record) });
+                showToast({
+                  label: kind === "wall" ? "Wall game added" : record.discarded_winner ? `Loss added · −${DISCARD_PENALTY} pts` : "Loss added",
+                  undo: () => removeGame(record),
+                });
             }}
             onRequestWin={requestWin}
             onRecap={setRecapDay}
@@ -456,18 +514,18 @@ export default function Home() {
                 todayRound={todayRound}
                 currentRound={currentRound}
                 nextRoundNumber={nextRoundNumber}
-                pendingBlanks={pendingBlanks}
-                onPendingBlanks={setPendingBlanks}
-                onToggleBlanks={setRoundBlanks}
                 onEndRound={endRound}
                 singleBlanks={singleBlanks}
                 onSingleBlanks={setSingleBlanks}
-                todaySingles={todayDay.unassigned}
+                todaySingles={todaySingles}
+                todayTournament={todayTournament}
                 today={todayTotals}
-                quickHands={handStats.slice(0, 8)}
-                onQuickWin={(h) => requestWin(h)}
+                todayGames={todayGames}
+                onWin={() => setPicking(true)}
                 onLoss={() => recordResult("loss")}
+                onThrew={() => recordResult("threw")}
                 onWall={() => recordResult("wall")}
+                onRemove={askDelete}
                 onRecap={() => setRecapDay(todayKey)}
               />
               {!noData && <CardChallenge progress={progress} totalWins={cardRecords.filter((r) => r.outcome === "win").length}
@@ -537,7 +595,7 @@ export default function Home() {
                           favorite={favorites.has(hand.id)}
                           celebrateKey={celebrate.handId === hand.id ? celebrate.key : 0}
                           onRequestWin={(h) => requestWin(h)}
-                          onUndo={undoWin}
+                          onUndo={askDeleteLastWin}
                           onNoteChange={setNote}
                           onToggleFavorite={toggleFavorite}
                         />
