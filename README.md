@@ -14,7 +14,7 @@ discarding the winning tile is −10.
 Blanks / No blanks choice), and Tournament (single games, tournament scoring).
 
 **Database:** apply the SQL files in `supabase/migrations/` in order
-(`0001` → `0006`) in the Supabase SQL editor.
+(`0001` → `0007`) in the Supabase SQL editor.
 
 **Tests:** `npm test` runs the stats and round-rule tests (Node's built-in runner, no extra packages).
 
@@ -77,7 +77,7 @@ Keep `id` stable once a hand has wins logged against it, so history is preserved
 
 ## Data model
 
-Two tables (migrations `0001`–`0006` in `supabase/migrations/`, all applied):
+Two tables (migrations `0001`–`0007` in `supabase/migrations/`, all applied):
 
 **`mahjong_wins`**: one row per game (the name is historical).
 
@@ -96,6 +96,19 @@ Two tables (migrations `0001`–`0006` in `supabase/migrations/`, all applied):
 
 **`mahjong_rounds`**: `id`, `started_at`, `blanks`, `closed_at` (set when a round
 is ended early). A database trigger stops any round from holding more than 4 games.
+
+## Accounts
+
+Each person signs in with their email and a one-time code (Supabase Auth email
+OTP, no passwords) and gets their own journal. Every game and round has a
+`user_id`, and Row Level Security only shows or changes rows for their owner.
+Games logged before accounts existed have a null `user_id` and belong to the
+single address stored in `mahjong_legacy_owner` (inserted by hand, never
+committed).
+
+Supabase setup: custom SMTP (the built-in mailer only reaches project members),
+Site URL set to the deployed address, and `{{ .Token }}` added to the
+"Magic Link" and "Confirm signup" email templates so the code is in the email.
 
 ## How the stats are defined
 
