@@ -347,22 +347,6 @@ export function StatsView({ records, rounds, removeGame, onStartTournament, onGo
           : "."}
       </p>
 
-      <div className="card flex flex-col items-start gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="font-display text-lg font-bold text-maroon-800">Export games</h3>
-          <p className="text-sm text-maroon-900/80">
-            Downloads a spreadsheet (CSV) of every game: date, outcome, mode, hand, points and round. Details that were never
-            recorded say &ldquo;not recorded.&rdquo; Hand notes and favorites are not included.
-          </p>
-        </div>
-        <button
-          onClick={exportCsv}
-          className="min-h-12 shrink-0 rounded-full bg-maroon-700 px-5 text-base font-semibold text-cream-50 hover:bg-maroon-800"
-        >
-          Export games
-        </button>
-      </div>
-
       {/* Win rates */}
       <Card title="Win rates" subtitle="Two honest ways to count. They answer different questions.">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -703,6 +687,22 @@ export function StatsView({ records, rounds, removeGame, onStartTournament, onGo
             ))}
           </ul>
         </Card>
+      </div>
+
+      <div className="card flex flex-col items-start gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="font-display text-lg font-bold text-maroon-800">Export games</h3>
+          <p className="text-sm text-maroon-900/80">
+            Downloads a spreadsheet (CSV) of every game: date, outcome, mode, hand, points and round. Details that were never
+            recorded say &ldquo;not recorded.&rdquo; Hand notes and favorites are not included.
+          </p>
+        </div>
+        <button
+          onClick={exportCsv}
+          className="min-h-12 shrink-0 rounded-full bg-maroon-700 px-5 text-base font-semibold text-cream-50 hover:bg-maroon-800"
+        >
+          Export games
+        </button>
       </div>
 
       <p className="px-1 text-center text-xs text-maroon-900/70">

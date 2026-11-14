@@ -32,8 +32,9 @@ export function GameRow({ game, index, meta, showDate, onRemove, onToggleBlanks 
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.96 }}
-      className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 ring-1 ${o.soft} ${o.ring}`}
+      className={`rounded-xl px-3 py-2 ring-1 ${o.soft} ${o.ring}`}
     >
+      <div className="flex items-center justify-between gap-3">
       <div className="flex min-w-0 items-center gap-2.5">
         <span
           className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm text-white ${o.dot}`}
@@ -67,7 +68,6 @@ export function GameRow({ game, index, meta, showDate, onRemove, onToggleBlanks 
               </span>
             )}
           </span>
-          {hand && <HandPattern hand={hand} className="text-sm font-bold" />}
           {meta && <span className="truncate text-sm text-maroon-900/75">{meta}</span>}
           {onToggleBlanks && (
             <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-maroon-900/85">
@@ -96,6 +96,14 @@ export function GameRow({ game, index, meta, showDate, onRemove, onToggleBlanks 
           </button>
         )}
       </div>
+      </div>
+      {/* The winning hand on one line, across the full width of the row */}
+      {hand && (
+        <HandPattern
+          hand={hand}
+          className="mt-1 flex-nowrap whitespace-nowrap text-[clamp(0.8rem,4.1vw,1.1rem)] font-extrabold"
+        />
+      )}
     </motion.li>
   );
 }
