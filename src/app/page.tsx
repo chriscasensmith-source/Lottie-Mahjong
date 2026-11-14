@@ -16,6 +16,9 @@ import { CardChallenge } from "@/components/CardChallenge";
 import { RecapSheet } from "@/components/RecapSheet";
 import { HandPicker } from "@/components/HandPicker";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { LoginScreen } from "@/components/LoginScreen";
+import { useAuth } from "@/hooks/useAuth";
+import { isSupabaseConfigured } from "@/lib/supabaseClient";
 import {
   DISCARD_PENALTY,
   GAMES_PER_ROUND,
@@ -89,8 +92,27 @@ function handMatches(hand: Hand, sectionName: string, q: string): boolean {
   return haystack.includes(q);
 }
 
+// The front door. With a database configured, you sign in first and get your
+// own journal. Without one (local runs), the journal lives on this device.
 export default function Home() {
+  const auth = useAuth();
+  if (!isSupabaseConfigured) return <Journal />;
+  if (!auth.ready) {
+    return (
+      <main className="paper-texture flex min-h-dvh items-center justify-center font-display text-maroon-900/70">
+        Opening your journal…
+      </main>
+    );
+  }
+  if (!auth.user) return <LoginScreen sendCode={auth.sendCode} verifyCode={auth.verifyCode} />;
+  // The key gives each person a completely fresh journal: nothing carries over
+  // in memory when someone else signs in on the same device.
+  return <Journal key={auth.user.id} email={auth.user.email} onSignOut={auth.signOut} />;
+}
+
+function Journal({ email, onSignOut }: { email?: string; onSignOut?: () => Promise<void> }) {
   const wins = useWins();
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const {
     records,
     rounds,
@@ -619,8 +641,36 @@ export default function Home() {
         )}
 
         <footer className="mt-16 text-center text-xs text-maroon-900/70">
-          The Mahj Journal · {CARD_YEAR} National Mah Jongg League card · {ALL_HANDS.length} hands · made for Lottie 🀄
+          {email && onSignOut && (
+            <p className="mb-3 text-sm text-maroon-900/85">
+              Signed in as <span className="font-semibold text-maroon-900">{email}</span>
+              <button
+                onClick={() => setConfirmSignOut(true)}
+                className="ml-2 min-h-9 rounded-full px-3 font-semibold text-maroon-700 ring-1 ring-maroon-300 hover:bg-maroon-50"
+              >
+                Sign out
+              </button>
+            </p>
+          )}
+          The Mahj Journal · {CARD_YEAR} National Mah Jongg League card · {ALL_HANDS.length} hands 🀄
         </footer>
+        <ConfirmDialog
+          open={confirmSignOut}
+          title="Sign out?"
+          body={
+            <p>
+              Your games stay safe in your journal. You&apos;ll need a new code from your email to sign back in on this
+              device.
+            </p>
+          }
+          cancelLabel="Stay signed in"
+          confirmLabel="Sign out"
+          onConfirm={() => {
+            setConfirmSignOut(false);
+            void onSignOut?.();
+          }}
+          onCancel={() => setConfirmSignOut(false)}
+        />
       </main>
     </MotionConfig>
   );

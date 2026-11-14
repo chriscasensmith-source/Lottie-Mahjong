@@ -8,13 +8,14 @@ interface ConfirmDialogProps {
   title: string;
   body?: React.ReactNode;
   confirmLabel: string;
+  cancelLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
 // "Are you sure?" before anything is deleted. Cancel has focus by default, so
 // an accidental Enter or double tap never deletes.
-export function ConfirmDialog({ open, title, body, confirmLabel, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, title, body, confirmLabel, cancelLabel = "Keep it", onConfirm, onCancel }: ConfirmDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -56,7 +57,7 @@ export function ConfirmDialog({ open, title, body, confirmLabel, onConfirm, onCa
                 onClick={onCancel}
                 className="min-h-11 flex-1 rounded-full bg-cream-200 text-sm font-semibold text-maroon-800 hover:bg-cream-300"
               >
-                Keep it
+                {cancelLabel}
               </button>
               <button
                 onClick={onConfirm}
