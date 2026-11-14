@@ -31,35 +31,51 @@ import {
 import { OUTCOME_META } from "@/lib/outcomes";
 import { HandPattern } from "@/components/HandCard";
 import { GameRow } from "@/components/GameRow";
-import { Segmented } from "@/components/WinSheet";
+import { Segmented } from "@/components/Segmented";
 import { downloadCsv, gamesToCsv } from "@/lib/export";
 
 const OUTCOMES: GameOutcome[] = ["win", "loss", "wall"];
 
+// A panel. With `collapsible`, the title is a button that opens the detail,
+// so the page reads as an overview first and the depth is one tap away.
 function Card({
   title,
   subtitle,
-  action,
   children,
   className = "",
+  collapsible = false,
 }: {
   title: string;
   subtitle?: string;
-  action?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  collapsible?: boolean;
 }) {
+  const heading = (
+    <div className="min-w-0">
+      <h3 className="font-display text-lg font-bold text-maroon-800">{title}</h3>
+      {subtitle && <p className="text-sm text-maroon-900/80">{subtitle}</p>}
+    </div>
+  );
+  if (!collapsible) {
+    return (
+      <section className={`card p-4 sm:p-5 ${className}`} aria-label={title}>
+        <div className="mb-3">{heading}</div>
+        {children}
+      </section>
+    );
+  }
   return (
-    <section className={`card p-4 sm:p-5 ${className}`} aria-label={title}>
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h3 className="card-title">{title}</h3>
-          {subtitle && <p className="mt-0.5 text-xs text-maroon-900/70">{subtitle}</p>}
-        </div>
-        {action}
-      </div>
-      {children}
-    </section>
+    <details className={`card group ${className}`}>
+      <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 rounded-3xl p-4 sm:px-5 [&::-webkit-details-marker]:hidden">
+        {heading}
+        <span className="shrink-0 text-sm font-semibold text-maroon-700 underline underline-offset-2">
+          <span className="group-open:hidden">Show</span>
+          <span className="hidden group-open:inline">Hide</span>
+        </span>
+      </summary>
+      <div className="px-4 pb-4 sm:px-5 sm:pb-5">{children}</div>
+    </details>
   );
 }
 
@@ -75,12 +91,48 @@ function Metric({
   detail?: string;
   explain: string;
 }) {
+  const empty = value === "—";
   return (
     <div className="rounded-2xl bg-cream-100 p-3 ring-1 ring-maroon-900/5">
-      <div className="text-xs font-semibold text-maroon-900/80">{label}</div>
-      <div className="font-display text-2xl font-bold tabular-nums text-maroon-700">{value}</div>
-      {detail && <div className="text-xs tabular-nums text-maroon-900/80">{detail}</div>}
-      <p className="mt-1 text-[11px] leading-snug text-maroon-900/70">{explain}</p>
+      <div className="text-sm font-semibold text-maroon-900/85">{label}</div>
+      {empty ? (
+        <div className="py-1 text-base font-semibold text-maroon-900/80">Not enough recorded games yet</div>
+      ) : (
+        <div className="font-display text-2xl font-bold tabular-nums text-maroon-700">{value}</div>
+      )}
+      {detail && <div className="text-sm tabular-nums text-maroon-900/85">{detail}</div>}
+      <p className="mt-1 text-sm leading-snug text-maroon-900/75">{explain}</p>
+    </div>
+  );
+}
+
+// The same numbers as the chart, as a table (for screen readers, or anyone who prefers it).
+function BucketTable({ buckets, rate }: { buckets: OutcomeBucket[]; rate: boolean }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-base">
+        <caption className="sr-only">{rate ? "Decisive win rate by month" : "Games by date"}</caption>
+        <thead>
+          <tr className="border-b border-maroon-900/15 text-sm text-maroon-900/80">
+            <th scope="col" className="py-1.5 pr-2 font-semibold">{rate ? "Month" : "When"}</th>
+            <th scope="col" className="py-1.5 pr-2 text-right font-semibold">Wins</th>
+            <th scope="col" className="py-1.5 pr-2 text-right font-semibold">Losses</th>
+            <th scope="col" className="py-1.5 pr-2 text-right font-semibold">Walls</th>
+            <th scope="col" className="py-1.5 text-right font-semibold">{rate ? "Win rate" : "Games"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {buckets.map((b) => (
+            <tr key={b.key} className="border-b border-maroon-900/5 last:border-0">
+              <th scope="row" className="py-1.5 pr-2 font-normal">{b.label}</th>
+              <td className="py-1.5 pr-2 text-right tabular-nums">{b.win}</td>
+              <td className="py-1.5 pr-2 text-right tabular-nums">{b.loss}</td>
+              <td className="py-1.5 pr-2 text-right tabular-nums">{b.wall}</td>
+              <td className="py-1.5 text-right font-semibold tabular-nums">{rate ? fmtPct(b.decisiveRate) : b.total}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -133,7 +185,7 @@ function StackedBars({ buckets }: { buckets: OutcomeBucket[] }) {
       </div>
       <div className="mt-1 flex gap-1 sm:gap-1.5">
         {buckets.map((b, i) => (
-          <span key={b.key} className="flex-1 text-center text-[10px] tabular-nums text-maroon-900/70">
+          <span key={b.key} className="flex-1 text-center text-xs tabular-nums text-maroon-900/70">
             {buckets.length > 8 && i % 2 === 1 && i !== buckets.length - 1 ? "" : b.label}
           </span>
         ))}
@@ -170,7 +222,7 @@ function RateBars({ buckets }: { buckets: OutcomeBucket[] }) {
               className={`relative flex h-full flex-1 flex-col items-center justify-end rounded-t ${sel?.key === b.key ? "bg-maroon-900/5" : ""}`}
             >
               {b.decisiveRate !== null && (
-                <span className="mb-0.5 text-[10px] font-semibold tabular-nums text-maroon-900/85">
+                <span className="mb-0.5 text-xs font-semibold tabular-nums text-maroon-900/85">
                   {Math.round(b.decisiveRate * 100)}%
                 </span>
               )}
@@ -184,7 +236,7 @@ function RateBars({ buckets }: { buckets: OutcomeBucket[] }) {
       </div>
       <div className="mt-1 flex gap-1.5">
         {buckets.map((b) => (
-          <span key={b.key} className="flex-1 text-center text-[10px] leading-tight text-maroon-900/70">
+          <span key={b.key} className="flex-1 text-center text-xs leading-tight text-maroon-900/70">
             {b.label}
             <br />
             <span className="tabular-nums">n={b.win + b.loss}</span>
@@ -198,7 +250,7 @@ function RateBars({ buckets }: { buckets: OutcomeBucket[] }) {
           {sel.wall ? ` (${sel.wall} walls not counted)` : ""}
         </p>
       )}
-      <p className="mt-1 text-[11px] text-maroon-900/70">
+      <p className="mt-1 text-xs text-maroon-900/70">
         n = decided games that month. Lighter bars have fewer than 10, so treat them as rough.
       </p>
     </div>
@@ -209,12 +261,15 @@ interface StatsViewProps {
   records: GameRecord[];
   rounds: Round[];
   removeGame: (record: GameRecord) => void;
+  onStartTournament: () => void;
+  onGoToHands: () => void;
 }
 
 type Chart = "dates" | "months" | "rate";
 
-export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
+export function StatsView({ records, rounds, removeGame, onStartTournament, onGoToHands }: StatsViewProps) {
   const [chart, setChart] = useState<Chart>("dates");
+  const [asTable, setAsTable] = useState(false);
 
   const s = useMemo(() => {
     const card = cardYearRecords(records);
@@ -246,8 +301,11 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         <p className="text-5xl" aria-hidden>
           📊
         </p>
-        <p className="mt-3 font-display text-lg font-semibold text-maroon-800">No games logged yet</p>
-        <p className="mt-1 text-sm">Log a win on a hand, or record a loss or wall game. Your stats will show up here.</p>
+        <p className="mt-3 font-display text-xl font-semibold text-maroon-800">No games logged yet</p>
+        <p className="mt-1 text-base">Your stats appear here after your first game.</p>
+        <button onClick={onGoToHands} className="mt-4 min-h-12 rounded-full bg-maroon-700 px-5 text-base font-semibold text-cream-50 hover:bg-maroon-800">
+          Log your first game
+        </button>
       </div>
     );
   }
@@ -256,7 +314,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
 
   function exportCsv() {
     const stamp = new Date().toISOString().slice(0, 10);
-    downloadCsv(`mahj-journal-games-${stamp}.csv`, gamesToCsv(records, rounds));
+    downloadCsv(`my-mahj-diary-games-${stamp}.csv`, gamesToCsv(records, rounds));
   }
 
   return (
@@ -278,7 +336,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
             className={`card p-4 ${t.wide ? "col-span-2 sm:col-span-1" : ""}`}
           >
             <div className="font-display text-3xl font-bold tabular-nums text-maroon-700">{fmtNum(t.value)}</div>
-            <div className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-maroon-900/75">{t.label}</div>
+            <div className="mt-0.5 text-xs font-semibold text-maroon-900/75">{t.label}</div>
           </motion.div>
         ))}
       </div>
@@ -288,6 +346,22 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
           ? ` (${fmtNum(s.pts.handPoints)}) minus ${s.pts.penalties} tournament discard${s.pts.penalties === 1 ? "" : "s"} (−${fmtNum(s.pts.penaltyPoints)}).`
           : "."}
       </p>
+
+      <div className="card flex flex-col items-start gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="font-display text-lg font-bold text-maroon-800">Export games</h3>
+          <p className="text-sm text-maroon-900/80">
+            Downloads a spreadsheet (CSV) of every game: date, outcome, mode, hand, points and round. Details that were never
+            recorded say &ldquo;not recorded.&rdquo; Hand notes and favorites are not included.
+          </p>
+        </div>
+        <button
+          onClick={exportCsv}
+          className="min-h-12 shrink-0 rounded-full bg-maroon-700 px-5 text-base font-semibold text-cream-50 hover:bg-maroon-800"
+        >
+          Export games
+        </button>
+      </div>
 
       {/* Win rates */}
       <Card title="Win rates" subtitle="Two honest ways to count. They answer different questions.">
@@ -323,7 +397,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
         {/* Outcome breakdown */}
         <Card title="Game outcomes" subtitle={`${fmtNum(o.total)} games`}>
           <div className="flex h-5 w-full gap-[2px] overflow-hidden rounded-[4px]" role="img" aria-label={`${o.win} wins, ${o.loss} losses, ${o.wall} wall games`}>
@@ -383,7 +457,16 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
               ]}
             />
           </div>
-          {chart === "rate" ? (
+          <button
+            onClick={() => setAsTable((v) => !v)}
+            aria-pressed={asTable}
+            className="mb-2 min-h-11 px-1 text-sm font-semibold text-maroon-700 underline underline-offset-2"
+          >
+            {asTable ? "Show as a chart" : "Show as a table"}
+          </button>
+          {asTable ? (
+            <BucketTable buckets={chart === "dates" ? s.byDate : s.byMonth} rate={chart === "rate"} />
+          ) : chart === "rate" ? (
             <RateBars buckets={s.byMonth} />
           ) : (
             <>
@@ -397,8 +480,8 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
 
         {/* Sections: completion vs wins */}
         <Card title="Section progress" subtitle={`${CARD_YEAR} card · hands won at least once, and total wins`}>
-          <div className="mb-1 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-wide text-maroon-900/70">
-            <span className="w-28 shrink-0 sm:w-32">Section</span>
+          <div className="mb-1 flex items-center gap-3 text-xs font-semibold text-maroon-900/70">
+            <span className="w-28 shrink-0 sm:w-36">Section</span>
             <span className="flex-1">Hands won</span>
             <span className="w-12 text-right">Hands</span>
             <span className="w-12 text-right">Wins</span>
@@ -409,7 +492,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
               const done = sec.total > 0 && sec.wonHands >= sec.total;
               return (
                 <div key={sec.id} className="flex items-center gap-3">
-                  <div className="w-28 shrink-0 truncate text-sm text-maroon-900 sm:w-32">{sec.name}</div>
+                  <div className="w-28 shrink-0 text-sm leading-tight text-maroon-900 sm:w-36">{sec.name}</div>
                   <div className="relative h-3 flex-1 overflow-hidden rounded-full bg-cream-200">
                     <motion.div
                       initial={{ width: 0 }}
@@ -427,14 +510,14 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
               );
             })}
           </div>
-          <p className="mt-3 text-[11px] text-maroon-900/70">
+          <p className="mt-3 text-xs text-maroon-900/70">
             Hands = different hands won at least once. Wins = every win in that section, repeats included. Gold bars are
             complete sections.
           </p>
         </Card>
 
         {/* Most-won hands */}
-        <Card title="Most-won hands" subtitle="By number of recorded wins">
+        <Card collapsible title="Most-won hands" subtitle="By number of recorded wins">
           {s.top.length === 0 ? (
             <p className="text-sm text-maroon-900/75">No wins yet.</p>
           ) : (
@@ -444,7 +527,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
                   <span className="w-5 text-center font-display text-sm font-bold text-maroon-700">{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <HandPattern hand={t.hand} className="text-sm font-extrabold" />
-                    <span className="text-[11px] text-maroon-900/70">{t.sectionName}</span>
+                    <span className="text-xs text-maroon-900/70">{t.sectionName}</span>
                   </div>
                   <span className="shrink-0 rounded-full bg-maroon-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-maroon-800">
                     {t.wins} win{t.wins === 1 ? "" : "s"}
@@ -453,13 +536,13 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
               ))}
             </ol>
           )}
-          <p className="mt-3 text-[11px] text-maroon-900/70">
-            Counts only. The journal doesn&apos;t track which hand you were going for, so there&apos;s no success rate per hand.
+          <p className="mt-3 text-xs text-maroon-900/70">
+            Counts only. The diary doesn&apos;t track which hand you were going for, so there&apos;s no success rate per hand.
           </p>
         </Card>
 
         {/* Rounds */}
-        <Card title="Scramble rounds" subtitle="Only rounds tracked with the 4-game round feature">
+        <Card collapsible title="Scramble rounds" subtitle="Only rounds tracked with the 4-game round feature">
           {r.completed === 0 ? (
             <div className="rounded-2xl bg-cream-100 p-4 text-sm text-maroon-900/85">
               <p className="font-semibold text-maroon-900">No completed rounds yet.</p>
@@ -498,7 +581,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         </Card>
 
         {/* Optional details */}
-        <Card title="Win details" subtitle="Jokers, self-drawn and blanks">
+        <Card collapsible title="Win details" subtitle="Jokers, self-drawn and blanks">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <Metric
               label="Self-drawn wins"
@@ -528,11 +611,20 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         </Card>
 
         {/* Tournament */}
-        <Card title="Tournament" subtitle="Single games played under tournament scoring" className="lg:col-span-2">
+        <Card collapsible title="Tournament" subtitle="Single games played under tournament scoring" className="lg:col-span-2">
           {s.tour.totals.total === 0 ? (
-            <p className="rounded-2xl bg-cream-100 p-4 text-sm text-maroon-900/85">
-              No tournament games yet. Switch Today to <span className="font-semibold">Tournament</span> to log them.
-            </p>
+            <div className="rounded-2xl bg-cream-100 p-4 text-base text-maroon-900/85">
+              <p>
+                No tournament games yet. Tournament games are single games where discarding the winning tile costs{" "}
+                {DISCARD_PENALTY} points.
+              </p>
+              <button
+                onClick={onStartTournament}
+                className="mt-3 min-h-12 rounded-full px-5 text-base font-semibold text-maroon-700 ring-1 ring-maroon-300 hover:bg-maroon-50"
+              >
+                Switch Today to Tournament
+              </button>
+            </div>
           ) : (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Metric
@@ -564,7 +656,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         </Card>
 
         {/* Card-year recap */}
-        <Card title={`Your ${CARD_YEAR} Mahj Journal`} subtitle={`Everything played with the ${CARD_YEAR} NMJL card`} className="lg:col-span-2">
+        <Card collapsible title={`Your ${CARD_YEAR} Mahj Diary`} subtitle={`Everything played with the ${CARD_YEAR} NMJL card`} className="lg:col-span-2">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {[
               { label: "Games", value: fmtNum(s.cardO.total) },
@@ -576,7 +668,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
             ].map((t) => (
               <div key={t.label} className="rounded-2xl bg-cream-100 p-3 ring-1 ring-maroon-900/5">
                 <div className="font-display text-xl font-bold tabular-nums text-maroon-700">{t.value}</div>
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-maroon-900/75">{t.label}</div>
+                <div className="text-xs font-semibold text-maroon-900/75">{t.label}</div>
               </div>
             ))}
           </div>
@@ -598,7 +690,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         </Card>
 
         {/* Recent activity */}
-        <Card title="Recent activity" subtitle="Latest 10 games" className="lg:col-span-2">
+        <Card collapsible title="Recent activity" subtitle="Latest 10 games" className="lg:col-span-2">
           <ul className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
             {s.activity.map((a) => (
               <GameRow
@@ -611,21 +703,6 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
             ))}
           </ul>
         </Card>
-      </div>
-
-      <div className="card flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="font-semibold text-maroon-900">Back up your games</p>
-          <p className="text-xs text-maroon-900/75">
-            A personal CSV copy of every game: date, outcome, hand, points and round. Unknown details say &ldquo;not recorded.&rdquo;
-          </p>
-        </div>
-        <button
-          onClick={exportCsv}
-          className="min-h-10 shrink-0 rounded-full bg-maroon-700 px-4 text-sm font-semibold text-cream-50 hover:bg-maroon-800"
-        >
-          Export CSV
-        </button>
       </div>
 
       <p className="px-1 text-center text-xs text-maroon-900/70">

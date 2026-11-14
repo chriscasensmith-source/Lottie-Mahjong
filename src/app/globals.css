@@ -6,6 +6,13 @@
   color-scheme: light;
 }
 
+/* Slightly larger type everywhere: body text lands at about 17px and scales
+   with the reader's own browser or phone text-size setting. */
+html {
+  font-size: 106.25%;
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   @apply text-maroon-900;
   background:
@@ -27,7 +34,7 @@ body {
     @apply rounded-3xl bg-cream-50 shadow-[0_1px_8px_rgba(52,8,17,0.06)] ring-1 ring-maroon-900/10;
   }
   .card-title {
-    @apply text-xs font-semibold uppercase tracking-[0.14em] text-maroon-900/75;
+    @apply text-base font-semibold text-maroon-900/85;
   }
 }
 
@@ -50,11 +57,13 @@ body {
 }
 
 /* Clear keyboard-focus ring for accessibility. */
+summary:focus-visible,
+[tabindex]:focus-visible,
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid #8c2136;
+  outline: 3px solid #8c2136;
   outline-offset: 2px;
 }

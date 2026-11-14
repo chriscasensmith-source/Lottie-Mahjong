@@ -12,7 +12,7 @@ import {
   gamePoints,
 } from "@/lib/stats";
 import { OUTCOME_META } from "@/lib/outcomes";
-import { Segmented } from "@/components/WinSheet";
+import { Segmented } from "@/components/Segmented";
 import { GameRow } from "@/components/GameRow";
 
 // One small outcome square (color + icon), used for round slots and single games.
@@ -33,7 +33,7 @@ function OutcomeChip({ game, label, dim }: { game: GameRecord; label: string; di
     >
       {meta.emoji}
       {game.discarded_winner && (
-        <span className="absolute -right-1 -top-1 rounded-full bg-tile-red px-1 text-[9px] font-bold leading-4 text-white">
+        <span className="absolute -right-1 -top-1 rounded-full bg-tile-red px-1 text-xs font-bold leading-4 text-white">
           −{DISCARD_PENALTY}
         </span>
       )}
@@ -41,27 +41,36 @@ function OutcomeChip({ game, label, dim }: { game: GameRecord; label: string; di
   );
 }
 
-// Four slots for a round, each filled with that game's outcome color + icon.
+// Four slots for a round. Each saved game shows its outcome as an icon and,
+// at full size, as a word too, so it never depends on color alone.
 export function RoundSlots({ games, size = "md" }: { games: GameRecord[]; size?: "sm" | "md" }) {
-  const dim = size === "sm" ? "h-6 w-6 text-[11px]" : "h-10 w-10 text-base";
+  const dim = size === "sm" ? "h-7 w-7 text-xs" : "h-10 w-10 text-base";
   return (
-    <div className="flex items-center gap-1.5">
+    <ol className="flex items-start gap-1.5" aria-label="Games in this round">
       {Array.from({ length: GAMES_PER_ROUND }).map((_, i) => {
         const g = games[i];
-        return g ? (
-          <OutcomeChip key={g.id ?? i} game={g} label={`Game ${i + 1}`} dim={dim} />
-        ) : (
-          <span
-            key={i}
-            role="img"
-            aria-label={`Game ${i + 1}: not played yet`}
-            className={`${dim} flex items-center justify-center rounded-lg border-2 border-dashed border-maroon-900/25 text-[11px] font-semibold text-maroon-900/60`}
-          >
-            {size === "md" ? i + 1 : ""}
-          </span>
+        return (
+          <li key={g?.id ?? i} className="flex flex-col items-center gap-0.5">
+            {g ? (
+              <OutcomeChip game={g} label={`Game ${i + 1}`} dim={dim} />
+            ) : (
+              <span
+                role="img"
+                aria-label={`Game ${i + 1}: not played yet`}
+                className={`${dim} flex items-center justify-center rounded-lg border-2 border-dashed border-maroon-900/30 font-semibold text-maroon-900/60`}
+              >
+                {size === "md" ? i + 1 : ""}
+              </span>
+            )}
+            {size === "md" && (
+              <span aria-hidden className="text-xs text-maroon-900/80">
+                {g ? (g.outcome === "wall" ? "Wall" : OUTCOME_META[g.outcome].label) : "—"}
+              </span>
+            )}
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }
 
@@ -83,7 +92,7 @@ interface RoundBarProps {
   todayRound: RoundView | null; // latest round today, whatever its state
   currentRound: RoundView | null; // the round the next game joins
   nextRoundNumber: number;
-  onEndRound: (roundId: string) => void;
+  onEndRound: (roundId: string) => void; // asks for confirmation first
   // single games
   singleBlanks: boolean;
   onSingleBlanks: (b: boolean) => void;
@@ -95,13 +104,13 @@ interface RoundBarProps {
   todayGames: GameRecord[]; // every game today, oldest first
   onWin: () => void;
   onLoss: () => void;
-  onThrew: () => void;
   onWall: () => void;
   onRemove: (game: GameRecord) => void; // asks for confirmation first
   onRecap: () => void;
 }
 
-const BTN = "flex min-h-12 items-center justify-center gap-1.5 rounded-2xl text-sm font-semibold ring-1 transition-colors";
+const BTN =
+  "flex min-h-14 flex-col items-center justify-center rounded-2xl text-base font-semibold ring-1 transition-colors";
 
 export function RoundBar(props: RoundBarProps) {
   const { mode, onMode, todayRound, currentRound, nextRoundNumber, todaySingles, todayTournament, today } = props;
@@ -119,19 +128,22 @@ export function RoundBar(props: RoundBarProps) {
   let hint: string;
   if (mode === "single") {
     title = "Single games";
-    hint = `${todaySingles.length} today · not part of a scramble`;
+    hint = `${todaySingles.length} today. Not part of a scramble round.`;
   } else if (mode === "tournament") {
     title = "Tournament";
-    hint = `${todayTournament.length} game${todayTournament.length === 1 ? "" : "s"} today · ${tournamentPoints} pts`;
+    hint = `${todayTournament.length} game${todayTournament.length === 1 ? "" : "s"} today · ${tournamentPoints} points`;
   } else if (finished === "complete") {
     title = `Round ${roundNo} complete`;
-    hint = `${GAMES_PER_ROUND} of ${GAMES_PER_ROUND} games · your next game starts Round ${nextRoundNumber}`;
+    hint = `All ${GAMES_PER_ROUND} games saved. Your next game starts Round ${nextRoundNumber}.`;
   } else if (finished === "ended") {
     title = `Round ${roundNo} ended early`;
-    hint = `${games.length} of ${GAMES_PER_ROUND} games · your next game starts Round ${nextRoundNumber}`;
+    hint = `${games.length} of ${GAMES_PER_ROUND} games saved. Your next game starts Round ${nextRoundNumber}.`;
+  } else if (games.length === 0) {
+    title = `Round ${roundNo} · not started`;
+    hint = "It starts when you save your next game.";
   } else {
-    title = `Round ${roundNo}`;
-    hint = `${games.length} of ${GAMES_PER_ROUND} games${games.length === 0 ? " · starts with your next game" : ""}`;
+    title = `Round ${roundNo} · Game ${games.length + 1} of ${GAMES_PER_ROUND}`;
+    hint = `${games.length} of ${GAMES_PER_ROUND} games saved so far.`;
   }
 
   const chips = (mode === "tournament" ? todayTournament : todaySingles).slice(-8);
@@ -140,34 +152,63 @@ export function RoundBar(props: RoundBarProps) {
   const listed = showAll ? recent : recent.slice(0, 3);
 
   return (
-    <section aria-label="Today" className="card p-4 sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-baseline gap-2">
-          <h2 className="font-display text-lg font-bold text-maroon-800">Today</h2>
-          <p className="text-sm text-maroon-900/75">
-            {today.total === 0
-              ? "No games yet"
-              : `${today.total} game${today.total === 1 ? "" : "s"} · ${today.win} win${today.win === 1 ? "" : "s"}`}
-          </p>
+    <section aria-labelledby="today-title" className="card p-4 sm:p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 id="today-title" className="font-display text-xl font-bold text-maroon-800">
+          Today
+        </h2>
+        <p className="text-base text-maroon-900/80">
+          {today.total === 0
+            ? "No games yet today"
+            : `${today.total} game${today.total === 1 ? "" : "s"} · ${today.win} win${today.win === 1 ? "" : "s"}`}
+        </p>
+      </div>
+
+      <div className="mt-2">
+        <p id="mode-label" className="text-sm font-semibold text-maroon-900/85">
+          How are you playing?
+        </p>
+        <div className="mt-1 grid grid-cols-3 gap-1 rounded-2xl bg-cream-200 p-1 ring-1 ring-maroon-900/10" role="radiogroup" aria-labelledby="mode-label">
+          {MODE_OPTIONS.map((o) => {
+            const active = o.value === mode;
+            return (
+              <button
+                key={o.value}
+                role="radio"
+                aria-checked={active}
+                onClick={() => onMode(o.value)}
+                className={`min-h-11 rounded-xl px-1 text-sm font-semibold transition-colors sm:text-base ${
+                  active ? "bg-maroon-700 text-cream-50 shadow-sm" : "text-maroon-800 hover:bg-cream-100"
+                }`}
+              >
+                {o.label}
+              </button>
+            );
+          })}
         </div>
-        <Segmented size="sm" label="How you're playing" value={mode} onChange={onMode} options={MODE_OPTIONS} />
       </div>
 
       <div className="mt-3 rounded-2xl bg-cream-100 p-3 ring-1 ring-maroon-900/5">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <div aria-live="polite">
-            <p className="font-display text-base font-bold text-maroon-800">{title}</p>
-            <p className="text-xs text-maroon-900/75">{hint}</p>
-          </div>
-          {mode === "single" && (
-            <Segmented label="Blanks for this game" value={props.singleBlanks} onChange={props.onSingleBlanks} options={BLANKS_OPTIONS} size="sm" />
-          )}
+        <div aria-live="polite">
+          <p className="font-display text-lg font-bold text-maroon-800">{title}</p>
+          <p className="text-sm text-maroon-900/80">{hint}</p>
         </div>
-        <div className="mt-2.5 flex min-h-10 items-center gap-1.5 overflow-x-auto pt-1">
+        {mode === "single" && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-maroon-900/85">Your next game is with</span>
+            <Segmented label="Blanks for your next single game" value={props.singleBlanks} onChange={props.onSingleBlanks} options={BLANKS_OPTIONS} size="sm" />
+          </div>
+        )}
+        {mode === "tournament" && (
+          <p className="mt-1 text-sm text-maroon-900/80">
+            Single games with tournament scoring. Discarding the winning tile costs {DISCARD_PENALTY} points.
+          </p>
+        )}
+        <div className="mt-2.5 flex min-h-11 flex-wrap items-center gap-1.5">
           {mode === "scramble" ? (
             <RoundSlots games={games} />
           ) : chips.length === 0 ? (
-            <span className="text-xs text-maroon-900/70">
+            <span className="text-sm text-maroon-900/75">
               No {mode === "tournament" ? "tournament" : "single"} games yet today.
             </span>
           ) : (
@@ -176,43 +217,41 @@ export function RoundBar(props: RoundBarProps) {
           {canEnd && (
             <button
               onClick={() => props.onEndRound(currentRound!.round.id)}
-              className="ml-auto min-h-10 shrink-0 rounded-full px-3 text-xs font-semibold text-maroon-700 ring-1 ring-maroon-300 transition-colors hover:bg-maroon-50"
-              title="Stop this round here. It's kept as an incomplete round."
+              className="ml-auto min-h-11 shrink-0 rounded-full px-3 text-sm font-semibold text-maroon-700 ring-1 ring-maroon-300 transition-colors hover:bg-maroon-50"
             >
-              End round early
+              End round early…
             </button>
           )}
         </div>
       </div>
 
-      {/* Log a game: win, loss, wall (and, in a tournament, throwing the winner) */}
-      <div className={`mt-3 grid gap-2 ${mode === "tournament" ? "grid-cols-2" : "grid-cols-3"}`}>
-        <button onClick={props.onWin} className={`${BTN} bg-outcome-win-soft text-outcome-win-ink ring-outcome-win/30 hover:bg-outcome-win/15`}>
-          🏆 Win
+      {/* Log the next game. Each button opens a review step; nothing saves until "Save". */}
+      <p id="log-label" className="mt-3 text-sm font-semibold text-maroon-900/85">
+        Log your next game
+      </p>
+      <div className="mt-1 grid grid-cols-3 gap-2" role="group" aria-labelledby="log-label">
+        <button onClick={props.onWin} className={`${BTN} bg-outcome-win-soft text-outcome-win-ink ring-outcome-win/40 hover:bg-outcome-win/15`}>
+          <span aria-hidden>🏆</span> Win
         </button>
-        <button onClick={props.onLoss} className={`${BTN} bg-outcome-loss-soft text-outcome-loss-ink ring-outcome-loss/30 hover:bg-outcome-loss/20`}>
-          ❌ Loss
+        <button onClick={props.onLoss} className={`${BTN} bg-outcome-loss-soft text-outcome-loss-ink ring-outcome-loss/40 hover:bg-outcome-loss/20`}>
+          <span aria-hidden>❌</span> Loss
         </button>
-        {mode === "tournament" && (
-          <button
-            onClick={props.onThrew}
-            className={`${BTN} bg-maroon-50 text-maroon-800 ring-maroon-300 hover:bg-maroon-100`}
-            aria-label={`Loss, and I discarded the winning tile, minus ${DISCARD_PENALTY} points`}
-          >
-            🫳 I threw it <span className="text-xs font-bold text-tile-red">−{DISCARD_PENALTY}</span>
-          </button>
-        )}
-        <button onClick={props.onWall} className={`${BTN} bg-outcome-wall-soft text-outcome-wall-ink ring-outcome-wall/30 hover:bg-outcome-wall/20`}>
-          🧱 Wall
+        <button onClick={props.onWall} className={`${BTN} bg-outcome-wall-soft text-outcome-wall-ink ring-outcome-wall/40 hover:bg-outcome-wall/20`}>
+          <span aria-hidden>🧱</span> Wall game
         </button>
       </div>
+      {recent.length === 0 && (
+        <p className="mt-2 text-sm text-maroon-900/80">
+          After your first game, tap how it ended. You&apos;ll get a chance to check it before it&apos;s saved.
+        </p>
+      )}
 
-      {/* Today's games, newest first, each removable (with a confirmation) */}
+      {/* Today's games, newest first. The place to fix a mistake after the fact. */}
       {recent.length > 0 && (
         <div className="mt-4">
-          <div className="mb-1.5 flex items-center justify-between">
-            <p className="card-title">Today&apos;s games</p>
-            <button onClick={props.onRecap} className="text-xs font-semibold text-maroon-700 underline underline-offset-2">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <h3 className="card-title">Today&apos;s games</h3>
+            <button onClick={props.onRecap} className="min-h-11 px-1 text-sm font-semibold text-maroon-700 underline underline-offset-2">
               Today&apos;s recap
             </button>
           </div>
@@ -224,9 +263,9 @@ export function RoundBar(props: RoundBarProps) {
           {recent.length > 3 && (
             <button
               onClick={() => setShowAll((v) => !v)}
-              className="mt-1.5 min-h-9 text-xs font-semibold text-maroon-700 underline underline-offset-2"
+              className="mt-1 min-h-11 px-1 text-sm font-semibold text-maroon-700 underline underline-offset-2"
             >
-              {showAll ? "Show fewer" : `Show all ${recent.length}`}
+              {showAll ? "Show fewer" : `Show all ${recent.length} games`}
             </button>
           )}
         </div>

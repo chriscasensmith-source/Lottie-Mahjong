@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { GameRecord, Hand, Round } from "@/lib/types";
+import type { GameOutcome, GameRecord, Round } from "@/lib/types";
 import {
-  DISCARD_PENALTY,
   GAMES_PER_ROUND,
   dayKeyToDate,
   dayRecap,
@@ -16,11 +15,10 @@ import {
   roundsForDay,
   type RoundView,
 } from "@/lib/stats";
-import { SECTIONS, ALL_HANDS } from "@/data/hands";
 import { OUTCOME_META } from "@/lib/outcomes";
 import { RoundSlots } from "@/components/RoundBar";
 import { GameRow } from "@/components/GameRow";
-import { Segmented } from "@/components/WinSheet";
+import { Segmented } from "@/components/Segmented";
 import { DaySummary } from "@/components/DaySummary";
 import { HandPattern } from "@/components/HandCard";
 import type { LogOptions } from "@/hooks/useWins";
@@ -60,8 +58,8 @@ interface CalendarViewProps {
   removeGame: (record: GameRecord) => void;
   removeRound: (roundId: string) => void;
   endRound: (roundId: string) => void;
-  onLog: (kind: "loss" | "wall", opts: LogOptions) => void;
-  onRequestWin: (hand: Hand, opts: LogOptions, label: string) => void;
+  /** Open the entry sheet for this day. Nothing is saved until its Save button. */
+  onAdd: (outcome: GameOutcome, opts: LogOptions) => void;
   onRecap: (dayKey: string) => void;
 }
 
@@ -74,8 +72,7 @@ export function CalendarView({
   removeGame,
   removeRound,
   endRound,
-  onLog,
-  onRequestWin,
+  onAdd,
   onRecap,
 }: CalendarViewProps) {
   const today = new Date();
@@ -108,7 +105,12 @@ export function CalendarView({
     setYear(d.getFullYear());
     setMonth(d.getMonth());
   }
-  function select(key: string) {
+  const detailRef = useRef<HTMLElement>(null);
+  function select(key: string, reveal = true) {
+    // On a phone the day's details sit below the month, so bring them into view.
+    if (reveal && window.matchMedia("(max-width: 1023px)").matches) {
+      window.setTimeout(() => detailRef.current?.scrollIntoView({ block: "start", behavior: "auto" }), 0);
+    }
     setSelectedKey(key);
     setOpenRound(null);
     setAdding(false);
@@ -136,7 +138,7 @@ export function CalendarView({
     weekday: "long",
     month: "long",
     day: "numeric",
-    year: selectedKey.slice(0, 4) === String(today.getFullYear()) ? undefined : "numeric",
+    year: "numeric",
   });
   const isFuture = selectedKey > todayKey;
   const hasActivity = dayGames.length > 0 || day.rounds.length > 0;
@@ -169,25 +171,18 @@ export function CalendarView({
     return localDayKey(next) === selectedKey ? next : new Date(sy, sm - 1, sd, 23, 59, 0);
   }
 
-  function logOpts(): { opts: LogOptions; label: string } {
+  function logOpts(): LogOptions {
     const at = atDate();
-    if (target === "single") {
-      return { opts: { at, single: true, blanks: singleBlanks }, label: `Single game · ${singleBlanks ? "Blanks" : "No blanks"}` };
-    }
-    if (target === "tournament") {
-      return { opts: { at, tournament: true }, label: "Tournament game" };
-    }
-    if (target === "new") {
-      return { opts: { at, newRound: true }, label: `Starts Round ${day.rounds.length + 1}` };
-    }
-    const rv = day.rounds.find((r) => r.round.id === target)!;
-    return { opts: { at, roundId: target }, label: `Round ${rv.number} · Game ${rv.games.length + 1} of ${GAMES_PER_ROUND}` };
+    if (target === "single") return { at, single: true, blanks: singleBlanks };
+    if (target === "tournament") return { at, tournament: true };
+    if (target === "new") return { at, newRound: true };
+    return { at, roundId: target };
   }
 
   const targetOptions = [
     { value: "single", label: "Single game" },
     { value: "tournament", label: "Tournament game" },
-    ...roomyRounds.map((r) => ({ value: r.round.id, label: `Round ${r.number} (${r.games.length}/${GAMES_PER_ROUND})` })),
+    ...roomyRounds.map((r) => ({ value: r.round.id, label: `Scramble round ${r.number} (has ${r.games.length} of ${GAMES_PER_ROUND} games)` })),
     { value: "new", label: "New scramble round" },
   ];
 
@@ -199,7 +194,7 @@ export function CalendarView({
           <button
             onClick={() => moveMonth(-1)}
             aria-label="Previous month"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-cream-200 text-lg text-maroon-800 hover:bg-cream-300"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-cream-200 text-xl text-maroon-800 hover:bg-cream-300"
           >
             ‹
           </button>
@@ -214,7 +209,7 @@ export function CalendarView({
           <button
             onClick={() => moveMonth(1)}
             aria-label="Next month"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-cream-200 text-lg text-maroon-800 hover:bg-cream-300"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-cream-200 text-xl text-maroon-800 hover:bg-cream-300"
           >
             ›
           </button>
@@ -224,9 +219,9 @@ export function CalendarView({
           <button
             onClick={() => {
               showMonthOf(todayKey);
-              select(todayKey);
+              select(todayKey, false);
             }}
-            className="min-h-9 rounded-full px-3 text-xs font-semibold text-maroon-700 ring-1 ring-maroon-300 hover:bg-maroon-50"
+            className="min-h-11 rounded-full px-3.5 text-sm font-semibold text-maroon-700 ring-1 ring-maroon-300 hover:bg-maroon-50"
           >
             Today
           </button>
@@ -234,9 +229,9 @@ export function CalendarView({
             <button
               onClick={() => {
                 showMonthOf(latestKey);
-                select(latestKey);
+                select(latestKey, false);
               }}
-              className="min-h-9 rounded-full px-3 text-xs font-semibold text-maroon-700 ring-1 ring-maroon-300 hover:bg-maroon-50"
+              className="min-h-11 rounded-full px-3.5 text-sm font-semibold text-maroon-700 ring-1 ring-maroon-300 hover:bg-maroon-50"
             >
               Last game day ·{" "}
               {dayKeyToDate(latestKey).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
@@ -246,7 +241,7 @@ export function CalendarView({
 
         <div className="mt-3 grid grid-cols-7 gap-1 sm:gap-1.5" role="grid" aria-label={monthName}>
           {WEEKDAYS.map((w, i) => (
-            <div key={i} className="pb-1 text-center text-[11px] font-semibold uppercase text-maroon-900/70" aria-hidden>
+            <div key={i} className="pb-1 text-center text-xs font-semibold uppercase text-maroon-900/70" aria-hidden>
               {w}
             </div>
           ))}
@@ -270,20 +265,22 @@ export function CalendarView({
                     : `${label}: no games${isToday ? ", today" : ""}`
                 }
                 title={o ? `${n} games · ${o.win}W ${o.loss}L ${o.wall} wall` : undefined}
-                className={`relative flex aspect-square min-h-10 flex-col items-center justify-center rounded-xl text-sm transition-colors ${
-                  n > 0 ? tierFor(n).cls : "bg-cream-200/60 text-maroon-900/75 hover:bg-cream-300"
-                } ${isSelected ? "ring-[3px] ring-gold-dark ring-offset-2 ring-offset-cream-50" : ""}`}
+                className={`relative flex aspect-square min-h-11 flex-col items-center justify-center rounded-xl text-base transition-colors ${
+                  n > 0 ? tierFor(n).cls : "bg-cream-200/60 text-maroon-900/80 hover:bg-cream-300"
+                } ${isToday ? "border-2 border-dashed border-maroon-900" : ""} ${
+                  isSelected ? "ring-[3px] ring-gold-dark ring-offset-2 ring-offset-cream-50" : ""
+                }`}
               >
                 <span className={`leading-none ${isToday ? "font-extrabold underline decoration-2 underline-offset-2" : "font-semibold"}`}>
                   {d}
                 </span>
-                {n > 0 && <span className="mt-0.5 text-[10px] font-bold leading-none tabular-nums">{n}</span>}
+                {n > 0 && <span className="mt-0.5 text-xs font-bold leading-none tabular-nums">{n}</span>}
               </button>
             );
           })}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-maroon-900/75">
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-maroon-900/75">
           <span>Games per day:</span>
           {TIERS.map((t) => (
             <span key={t.label} className="flex items-center gap-1">
@@ -294,18 +291,21 @@ export function CalendarView({
           <span className="flex items-center gap-1">
             <span className="h-3 w-3 rounded ring-2 ring-gold-dark" /> selected
           </span>
-          <span className="font-extrabold underline">Today</span>
+          <span className="flex items-center gap-1">
+            <span className="h-3 w-3 rounded border-2 border-dashed border-maroon-900" /> today
+          </span>
+          <span>The small number is games played.</span>
         </div>
       </section>
 
       {/* Day detail */}
-      <section aria-label="Selected day" className="card p-4 sm:p-5">
+      <section ref={detailRef} aria-label="Selected day" className="card scroll-mt-3 p-4 sm:p-5">
         <div className="flex items-start justify-between gap-3">
-          <h2 className="font-display text-lg font-bold text-maroon-800">{selectedLabel}</h2>
+          <h2 className="font-display text-xl font-bold text-maroon-800">{selectedLabel}</h2>
           {hasActivity && dayGames.length > 0 && (
             <button
               onClick={() => onRecap(selectedKey)}
-              className="min-h-9 shrink-0 rounded-full bg-cream-200 px-3 text-xs font-semibold text-maroon-800 hover:bg-cream-300"
+              className="min-h-11 shrink-0 rounded-full bg-cream-200 px-4 text-sm font-semibold text-maroon-800 hover:bg-cream-300"
             >
               Recap
             </button>
@@ -328,13 +328,13 @@ export function CalendarView({
 
         {!hasActivity && (
           <div className="mt-4 rounded-2xl bg-cream-100 px-4 py-5 text-center">
-            <p className="text-sm text-maroon-900/80">No games logged for this date.</p>
+            <p className="text-base text-maroon-900/85">No games logged for {selectedLabel}.</p>
             {!isFuture && !adding && (
               <button
                 onClick={() => setAdding(true)}
-                className="mt-3 min-h-10 rounded-full bg-maroon-700 px-4 text-sm font-semibold text-cream-50 hover:bg-maroon-800"
+                className="mt-3 min-h-12 rounded-full bg-maroon-700 px-5 text-base font-semibold text-cream-50 hover:bg-maroon-800"
               >
-                + Add a game to this day
+                Add a game
               </button>
             )}
           </div>
@@ -352,18 +352,20 @@ export function CalendarView({
                     <button
                       onClick={() => setOpenRound(open && day.rounds.length > 1 ? null : rv.round.id)}
                       aria-expanded={open}
-                      className="flex min-h-10 flex-1 items-center gap-3 text-left"
+                      className="flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-left"
                     >
                       <span className="flex flex-col">
                         <span className="whitespace-nowrap font-display text-base font-bold text-maroon-800">
                           Round {rv.number}
                         </span>
-                        <span className="whitespace-nowrap text-[11px] text-maroon-900/75">
-                          {ROUND_STATUS[rv.status]} · {rv.games.length}/{GAMES_PER_ROUND} · {w} won
+                        <span className="text-sm text-maroon-900/80">
+                          {ROUND_STATUS[rv.status]} · {rv.games.length} of {GAMES_PER_ROUND} games · {w} won
                         </span>
                       </span>
                       <RoundSlots games={rv.games} size="sm" />
-                      {day.rounds.length > 1 && <span className="ml-auto text-maroon-900/60">{open ? "▴" : "▾"}</span>}
+                      {day.rounds.length > 1 && (
+                        <span className="ml-auto text-sm font-semibold text-maroon-700 underline">{open ? "Hide games" : "Show games"}</span>
+                      )}
                     </button>
                   </div>
                   <AnimatePresence initial={false}>
@@ -377,7 +379,7 @@ export function CalendarView({
                         {rv.games.length === 0 ? (
                           <div className="flex items-center justify-between px-3 pb-3 text-sm text-maroon-900/75">
                             No games in this round yet.
-                            <button onClick={() => removeRound(rv.round.id)} className="text-xs font-semibold text-maroon-700 underline">
+                            <button onClick={() => removeRound(rv.round.id)} className="min-h-11 px-1 text-sm font-semibold text-maroon-700 underline">
                               Remove empty round
                             </button>
                           </div>
@@ -388,7 +390,7 @@ export function CalendarView({
                             ))}
                             {rv.status === "open" && rv.games.length > 0 && selectedKey !== todayKey && (
                               <li className="pt-1 text-right">
-                                <button onClick={() => endRound(rv.round.id)} className="text-xs font-semibold text-maroon-700 underline">
+                                <button onClick={() => endRound(rv.round.id)} className="min-h-11 px-1 text-sm font-semibold text-maroon-700 underline">
                                   End this round at {rv.games.length} of {GAMES_PER_ROUND}
                                 </button>
                               </li>
@@ -431,7 +433,7 @@ export function CalendarView({
                 {legacy.length > 0 && (
           <div className="mt-4">
             <p className="card-title">Games · {legacy.length}</p>
-            <p className="mb-2 mt-0.5 text-[11px] text-maroon-900/70">
+            <p className="mb-2 mt-0.5 text-xs text-maroon-900/70">
               Logged before rounds and game details were tracked, so they&apos;re listed by time.
             </p>
             <ul className="space-y-1.5">
@@ -443,7 +445,7 @@ export function CalendarView({
         )}
 
         {hasActivity && (
-          <div className="mt-4 flex flex-wrap justify-center gap-3 text-[11px] text-maroon-900/75">
+          <div className="mt-4 flex flex-wrap justify-center gap-3 text-xs text-maroon-900/75">
             {(["win", "loss", "wall"] as const).map((k) => (
               <span key={k} className="flex items-center gap-1">
                 <span className={`h-2.5 w-2.5 rounded-sm ${OUTCOME_META[k].dot}`} />
@@ -455,33 +457,33 @@ export function CalendarView({
 
         {/* Add a game to this day (backdating for missed entries) */}
         {isFuture ? (
-          <p className="mt-4 text-sm text-maroon-900/75">You can&apos;t add games to a future date.</p>
+          <p className="mt-4 text-base text-maroon-900/80">You can&apos;t add games to a future date.</p>
         ) : !adding ? (
           hasActivity && (
             <button
               onClick={() => setAdding(true)}
-              className="mt-4 min-h-10 w-full rounded-2xl border-2 border-dashed border-maroon-900/20 text-sm font-semibold text-maroon-700 hover:bg-cream-100"
+              className="mt-4 min-h-12 w-full rounded-2xl border-2 border-dashed border-maroon-900/25 text-base font-semibold text-maroon-700 hover:bg-cream-100"
             >
-              + Add a game to this day
+              Add a game to this day
             </button>
           )
         ) : (
           <div className="mt-4 rounded-2xl bg-cream-100 p-3 ring-1 ring-maroon-900/10">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="card-title">Add a game to this day</p>
-              <button onClick={() => setAdding(false)} className="text-xs font-semibold text-maroon-700 underline">
-                Done
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <h3 className="text-base font-semibold text-maroon-900">Add a game to {selectedLabel}</h3>
+              <button onClick={() => setAdding(false)} className="min-h-11 shrink-0 px-1 text-sm font-semibold text-maroon-700 underline">
+                Close
               </button>
             </div>
 
-            <label className="text-xs font-semibold text-maroon-900/80" htmlFor="add-target">
+            <label className="text-sm font-semibold text-maroon-900/85" htmlFor="add-target">
               Add it as
             </label>
             <select
               id="add-target"
               value={target}
               onChange={(e) => setTarget(e.target.value)}
-              className="mt-1 min-h-10 w-full rounded-lg border border-maroon-900/20 bg-white px-2 text-sm text-maroon-900 outline-none focus:border-maroon-500"
+              className="mt-1 min-h-12 w-full rounded-xl border-2 border-maroon-900/20 bg-white px-2 text-base text-maroon-900 outline-none focus:border-maroon-600"
             >
               {targetOptions.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -491,55 +493,35 @@ export function CalendarView({
             </select>
 
             {target === "single" && (
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-maroon-900/80">This game</span>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-maroon-900/85">This game was played with</span>
                 <Segmented size="sm" label="Blanks" value={singleBlanks} onChange={onSingleBlanks} options={BLANKS_OPTIONS} />
               </div>
             )}
 
-            <div className={`mt-3 grid gap-2 ${target === "tournament" ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-[1fr_auto_auto]"}`}>
-              <select
-                value=""
-                onChange={(e) => {
-                  const hand = ALL_HANDS.find((h) => h.id === e.target.value);
-                  if (!hand) return;
-                  const { opts, label } = logOpts();
-                  onRequestWin(hand, opts, label);
-                  if (target === "new") setFollowNew(true);
-                }}
-                aria-label="Add a winning hand to this day"
-                className={`min-h-10 w-full min-w-0 rounded-lg border border-maroon-900/20 bg-white px-2 text-sm text-maroon-900 outline-none focus:border-maroon-500 ${target === "tournament" ? "col-span-3" : "col-span-2 sm:col-span-1"}`}
-              >
-                <option value="">🏆 Add a win…</option>
-                {SECTIONS.map((s) => (
-                  <optgroup key={s.id} label={s.name}>
-                    {s.hands.map((h) => (
-                      <option key={h.id} value={h.id}>
-                        {h.pattern.map((p) => p.text).join(" ")} · {h.points} pts {h.concealed ? "Concealed" : "Exposed"}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              {(target === "tournament" ? (["loss", "threw", "wall"] as const) : (["loss", "wall"] as const)).map((kind) => {
-                const look = OUTCOME_META[kind === "threw" ? "loss" : kind];
+            <p id="add-how" className="mt-3 text-sm font-semibold text-maroon-900/85">
+              How did the game end?
+            </p>
+            <div className="mt-1 grid grid-cols-3 gap-2" role="group" aria-labelledby="add-how">
+              {(["win", "loss", "wall"] as const).map((kind) => {
+                const look = OUTCOME_META[kind];
                 return (
                   <button
                     key={kind}
                     onClick={() => {
-                      const { opts } = logOpts();
-                      onLog(kind === "wall" ? "wall" : "loss", kind === "threw" ? { ...opts, discardedWinner: true } : opts);
+                      onAdd(kind, logOpts());
                       if (target === "new") setFollowNew(true);
                     }}
-                    className={`min-h-10 rounded-lg px-3 text-sm font-semibold ring-1 ${look.soft} ${look.ink} ${look.ring}`}
+                    className={`flex min-h-14 flex-col items-center justify-center rounded-2xl text-base font-semibold ring-1 ${look.soft} ${look.ink} ${look.ring}`}
                   >
-                    {kind === "loss" ? "+ Loss" : kind === "wall" ? "+ Wall" : `+ Threw it −${DISCARD_PENALTY}`}
+                    <span aria-hidden>{look.emoji}</span>
+                    {kind === "wall" ? "Wall game" : look.label}
                   </button>
                 );
               })}
             </div>
-            <p className="mt-2 text-[11px] text-maroon-900/70">
-              Games added here only join a round if you pick one above.
+            <p className="mt-2 text-sm text-maroon-900/80">
+              You&apos;ll check the details before anything is saved. A game only joins a round if you pick that round above.
             </p>
           </div>
         )}

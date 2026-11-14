@@ -1,7 +1,7 @@
 {
-  "name": "The Mahj Journal",
-  "short_name": "Mahj Journal",
-  "description": "A journal for your American Mahjong games — hands, rounds, wins, and stats.",
+  "name": "My Mahj Diary",
+  "short_name": "Mahj Diary",
+  "description": "A diary for your American Mahjong games — hands, rounds, wins, and stats.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#F3EAD6",
