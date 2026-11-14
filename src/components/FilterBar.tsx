@@ -16,14 +16,11 @@ interface FilterBarProps {
   counts: Partial<Record<HandFilter, number>>;
 }
 
-// Scrolls sideways on narrow phones instead of wrapping into a tall block.
+// Every filter is visible at once (they wrap onto a second line on a phone
+// rather than hiding off the side of the screen).
 export function FilterBar({ value, onChange, counts }: FilterBarProps) {
   return (
-    <div
-      role="radiogroup"
-      aria-label="Show hands"
-      className="no-scrollbar -mx-4 flex max-w-[calc(100%+2rem)] gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:max-w-full sm:flex-wrap sm:justify-center sm:px-0"
-    >
+    <div role="radiogroup" aria-label="Show which hands" className="flex flex-wrap gap-1.5">
       {OPTIONS.map((opt) => {
         const active = value === opt.key;
         const n = counts[opt.key];
@@ -33,17 +30,16 @@ export function FilterBar({ value, onChange, counts }: FilterBarProps) {
             role="radio"
             aria-checked={active}
             onClick={() => onChange(opt.key)}
-            className={`min-h-10 shrink-0 whitespace-nowrap rounded-full px-4 text-sm font-semibold ring-1 transition-colors ${
+            className={`min-h-11 whitespace-nowrap rounded-full px-3.5 text-base font-semibold ring-1 transition-colors ${
               active
                 ? "bg-maroon-700 text-cream-50 ring-maroon-700"
-                : "bg-cream-50 text-maroon-800 ring-maroon-900/15 hover:bg-cream-200"
+                : "bg-cream-50 text-maroon-800 ring-maroon-900/20 hover:bg-cream-200"
             }`}
           >
+            {active && <span aria-hidden>✓ </span>}
             {opt.label}
             {n !== undefined && (
-              <span className={`ml-1.5 tabular-nums ${active ? "text-cream-100/85" : "text-maroon-900/60"}`}>
-                {n}
-              </span>
+              <span className={`ml-1.5 tabular-nums ${active ? "text-cream-100" : "text-maroon-900/70"}`}>{n}</span>
             )}
           </button>
         );

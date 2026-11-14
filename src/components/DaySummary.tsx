@@ -16,7 +16,7 @@ export function DaySummary({ recap }: { recap: DayRecap }) {
     <dl className={`grid gap-1.5 ${tiles.length > 5 ? "grid-cols-3 sm:grid-cols-6" : "grid-cols-5"}`}>
       {tiles.map((x) => (
         <div key={x.label} className="flex flex-col-reverse rounded-xl bg-cream-100 px-1 py-2 text-center ring-1 ring-maroon-900/5">
-          <dt className="text-[10px] font-semibold uppercase tracking-wide text-maroon-900/70">{x.label}</dt>
+          <dt className="text-xs font-semibold text-maroon-900/70">{x.label}</dt>
           <dd className={`font-display text-lg font-bold tabular-nums ${x.cls ?? "text-maroon-700"}`}>{x.value}</dd>
         </div>
       ))}

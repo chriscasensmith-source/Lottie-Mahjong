@@ -83,7 +83,7 @@ export function LoginScreen({ sendCode, verifyCode }: LoginScreenProps) {
   return (
     <main className="paper-texture mx-auto flex min-h-dvh max-w-md flex-col px-4 pb-10 pt-6">
       <header className="rounded-3xl bg-maroon-700 px-5 py-6 text-center text-cream-50 shadow-[0_8px_24px_rgba(52,8,17,0.16)]">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-cream-200/85">🀄 {CARD_YEAR} NMJL card</p>
+        <p className="text-xs font-semibold text-cream-200/85">🀄 {CARD_YEAR} NMJL card</p>
         <h1 className="mt-1 font-display text-4xl font-bold tracking-tight">My Mahj Diary</h1>
         <p className="mt-1 text-sm text-cream-100/85">Your hands, rounds &amp; wins.</p>
       </header>
