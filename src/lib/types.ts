@@ -53,6 +53,8 @@ export interface GameRecord {
   // values are column defaults, not answers). Missing = treat as recorded.
   details_recorded?: boolean;
   card_year?: number; // which NMJL card this game was played with
+  tournament?: boolean; // played under tournament scoring (single game)
+  discarded_winner?: boolean | null; // tournament loss: she threw the winning tile (-10)
 }
 
 // A round: up to 4 games played together, with a blanks house-rule flag.
@@ -63,8 +65,9 @@ export interface Round {
   closed_at?: string | null; // set when the round was ended before 4 games
 }
 
-// How games are being played: grouped into rounds of 4, or one at a time.
-export type PlayMode = "rounds" | "single";
+// How games are being played: a scramble (rounds of 4), one game at a time,
+// or tournament play (single games with tournament scoring).
+export type PlayMode = "scramble" | "single" | "tournament";
 
 // Options captured when logging a win.
 export interface WinOptions {

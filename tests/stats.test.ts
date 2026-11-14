@@ -18,6 +18,8 @@ import {
   dayRecap,
   topHands,
   fmtPct,
+  pointsBreakdown,
+  tournamentStats,
 } from "@/lib/stats";
 import { gamesToCsv } from "@/lib/export";
 import type { GameRecord, Round } from "@/lib/types";
@@ -114,14 +116,41 @@ test("milestones and section completion only fire when the data supports them", 
   assert.equal(stats[0].wins, sec.hands.length); // wins = every win
 });
 
-test("points: base value for untracked wins, NMJL doubling for tracked ones", () => {
+test("points: base value for untracked wins, flat +20 / +10 bonuses for tracked ones", () => {
   const hand = ALL_HANDS.find((h) => !h.id.startsWith("sp-"))!;
   const sp = ALL_HANDS.find((h) => h.id.startsWith("sp-"))!;
   assert.equal(gamePoints(legacy("win", { hand_id: hand.id })), hand.points);
-  assert.equal(gamePoints(g("win", { hand_id: hand.id, jokerless: true })), hand.points * 2);
-  assert.equal(gamePoints(g("win", { hand_id: hand.id, jokerless: true, self_drawn: true })), hand.points * 4);
-  assert.equal(gamePoints(g("win", { hand_id: sp.id, jokerless: true })), sp.points); // no bonus
+  assert.equal(gamePoints(g("win", { hand_id: hand.id, jokerless: true })), hand.points + 20);
+  assert.equal(gamePoints(g("win", { hand_id: hand.id, self_drawn: true })), hand.points + 10);
+  assert.equal(gamePoints(g("win", { hand_id: hand.id, jokerless: true, self_drawn: true })), hand.points + 30);
+  assert.equal(gamePoints(g("win", { hand_id: sp.id, jokerless: true })), sp.points); // no joker bonus
   assert.equal(totalPoints([g("loss"), g("wall")]), 0);
+});
+
+test("tournament: discarding the winning tile costs 10 points", () => {
+  const hand = ALL_HANDS[0];
+  const recs = [
+    g("win", { hand_id: hand.id, tournament: true }),
+    g("loss", { tournament: true, discarded_winner: true }),
+    g("loss", { tournament: true, discarded_winner: false }),
+    g("loss"), // a regular loss never costs points
+  ];
+  assert.equal(gamePoints(recs[1]), -10);
+  assert.equal(totalPoints(recs), hand.points - 10);
+  const b = pointsBreakdown(recs);
+  assert.equal(b.handPoints, hand.points);
+  assert.equal(b.penalties, 1);
+  assert.equal(b.net, hand.points - 10);
+  const t = tournamentStats(recs);
+  assert.equal(t.totals.total, 3);
+  assert.equal(t.points.net, hand.points - 10);
+});
+
+test("scramble rounds and tournament games never count as blanks", () => {
+  const rounds: Round[] = [{ id: "r", started_at: at("2026-11-03"), blanks: true }];
+  const d = detailStats([g("loss", { round_id: "r" }), g("loss", { tournament: true, blanks: true }), g("loss", { blanks: true })], rounds);
+  assert.equal(d.trackedGames, 3);
+  assert.equal(d.blanksGames, 1); // only the single game
 });
 
 test("untracked details are unknown, not false", () => {
@@ -217,4 +246,5 @@ test("CSV export marks unknown details as not recorded", () => {
   assert.match(lines[0], /^game_id,date,time/);
   assert.match(lines[1], /not recorded/);
   assert.match(lines[2], /self-drawn/);
+  assert.match(lines[1], /,not recorded,/); // mode of an older game
 });

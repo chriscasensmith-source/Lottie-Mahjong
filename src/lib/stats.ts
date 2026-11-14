@@ -351,11 +351,17 @@ export function recentActivity(records: GameRecord[], limit = 10): ActivityItem[
 }
 
 // ---------------------------------------------------------------------------
-// Scoring (NMJL-style). Unchanged rules:
-//   - No jokers doubles the hand value, except Singles & Pairs (never jokers).
-//   - Self-drawn doubles again.
+// Scoring
+//   - A winning hand scores its value from the card.
+//   - Won without jokers: +20 (not Singles & Pairs, which never use jokers).
+//   - Self-drawn (she drew her own Mahjong tile): +10.
+//   - Tournament loss where she discarded the winning tile: -10.
 // Older games never recorded jokers / self-drawn, so they count at base value.
 // ---------------------------------------------------------------------------
+
+export const JOKERLESS_BONUS = 20;
+export const SELF_DRAWN_BONUS = 10;
+export const DISCARD_PENALTY = 10;
 
 export function isAlwaysJokerless(handId: string): boolean {
   return HAND_SECTION.get(handId)?.id === "singles-pairs";
@@ -364,26 +370,54 @@ export function isAlwaysJokerless(handId: string): boolean {
 export function winPoints(
   handId: string,
   opts: { jokerless: boolean; selfDrawn: boolean },
-): { base: number; total: number; jokerlessBonus: boolean } {
+): { base: number; total: number; jokerlessBonus: boolean; selfDrawnBonus: boolean } {
   const base = HAND_BY_ID.get(handId)?.points ?? 0;
   const jokerlessBonus = opts.jokerless && !isAlwaysJokerless(handId);
-  let total = base;
-  if (jokerlessBonus) total *= 2;
-  if (opts.selfDrawn) total *= 2;
-  return { base, total, jokerlessBonus };
+  const selfDrawnBonus = opts.selfDrawn;
+  const total = base + (jokerlessBonus ? JOKERLESS_BONUS : 0) + (selfDrawnBonus ? SELF_DRAWN_BONUS : 0);
+  return { base, total, jokerlessBonus, selfDrawnBonus };
 }
 
-// Points a single game is worth (0 for losses and walls).
+// Points a single game adds to (or takes from) her total.
 export function gamePoints(r: GameRecord): number {
+  if (r.outcome === "loss") return r.discarded_winner ? -DISCARD_PENALTY : 0;
   if (!isWin(r)) return 0;
   return winPoints(r.hand_id!, { jokerless: !!r.jokerless, selfDrawn: !!r.self_drawn }).total;
 }
 
-// Gross points from winning hands. There are no payments or net scores.
+// Net points: winning hands minus discard penalties.
 export function totalPoints(records: GameRecord[]): number {
   let sum = 0;
   for (const r of records) sum += gamePoints(r);
   return sum;
+}
+
+export interface PointsBreakdown {
+  net: number;
+  handPoints: number; // everything earned from winning hands
+  penalties: number; // number of times she discarded the winner
+  penaltyPoints: number; // penalties × 10
+}
+
+export function pointsBreakdown(records: GameRecord[]): PointsBreakdown {
+  let handPoints = 0,
+    penalties = 0;
+  for (const r of records) {
+    if (isWin(r)) handPoints += gamePoints(r);
+    else if (r.outcome === "loss" && r.discarded_winner) penalties++;
+  }
+  const penaltyPoints = penalties * DISCARD_PENALTY;
+  return { net: handPoints - penaltyPoints, handPoints, penalties, penaltyPoints };
+}
+
+export interface TournamentStats {
+  totals: OutcomeTotals;
+  points: PointsBreakdown;
+}
+
+export function tournamentStats(records: GameRecord[]): TournamentStats {
+  const t = records.filter((r) => r.tournament);
+  return { totals: outcomeTotals(t), points: pointsBreakdown(t) };
 }
 
 // ---------------------------------------------------------------------------
@@ -395,13 +429,12 @@ export function detailsRecorded(r: GameRecord): boolean {
   return r.details_recorded !== false;
 }
 
-// Blanks for a game: round games follow their round, single games carry their
-// own value, and older games that were never asked are unknown (null).
+// Blanks for a game: scramble rounds and tournament games are never played
+// with blanks, single games carry their own setting, and older games that
+// were never asked are unknown (null).
 export function gameBlanks(g: GameRecord, roundById: Map<string, Round>): Tracked {
-  if (g.round_id) {
-    const round = roundById.get(g.round_id);
-    if (round) return round.blanks;
-  }
+  if (g.round_id && roundById.has(g.round_id)) return false;
+  if (g.tournament) return false;
   return detailsRecorded(g) ? !!g.blanks : null;
 }
 
@@ -535,7 +568,6 @@ export interface RoundStats {
   avgWinsPerCompleted: number | null;
   completedWithWin: number;
   completedMultiWin: number;
-  completedWithBlanks: number;
 }
 
 // Built only from explicitly tracked rounds. Older games never join a round.
@@ -546,8 +578,7 @@ export function roundStats(records: GameRecord[], rounds: Round[]): RoundStats {
     incomplete = 0,
     winsInCompleted = 0,
     completedWithWin = 0,
-    completedMultiWin = 0,
-    completedWithBlanks = 0;
+    completedMultiWin = 0;
   for (const round of rounds) {
     const games = byRound.get(round.id) ?? [];
     if (games.length === 0) continue;
@@ -561,7 +592,6 @@ export function roundStats(records: GameRecord[], rounds: Round[]): RoundStats {
     winsInCompleted += w;
     if (w >= 1) completedWithWin++;
     if (w >= 2) completedMultiWin++;
-    if (round.blanks) completedWithBlanks++;
   }
   return {
     tracked,
@@ -571,7 +601,6 @@ export function roundStats(records: GameRecord[], rounds: Round[]): RoundStats {
     avgWinsPerCompleted: ratio(winsInCompleted, completed),
     completedWithWin,
     completedMultiWin,
-    completedWithBlanks,
   };
 }
 

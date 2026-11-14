@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { GameRecord, Hand, Round } from "@/lib/types";
 import {
+  DISCARD_PENALTY,
   GAMES_PER_ROUND,
   dayKeyToDate,
   dayRecap,
   detailsRecorded,
+  gamePoints,
   gamesByDay,
   localDayKey,
   outcomeTotals,
@@ -54,12 +56,10 @@ interface CalendarViewProps {
   rounds: Round[];
   singleBlanks: boolean;
   onSingleBlanks: (b: boolean) => void;
-  defaultBlanks: boolean;
   setGameBlanks: (record: GameRecord, blanks: boolean) => void;
   removeGame: (record: GameRecord) => void;
   removeRound: (roundId: string) => void;
   endRound: (roundId: string) => void;
-  setRoundBlanks: (roundId: string, blanks: boolean) => void;
   onLog: (kind: "loss" | "wall", opts: LogOptions) => void;
   onRequestWin: (hand: Hand, opts: LogOptions, label: string) => void;
   onRecap: (dayKey: string) => void;
@@ -70,12 +70,10 @@ export function CalendarView({
   rounds,
   singleBlanks,
   onSingleBlanks,
-  defaultBlanks,
   setGameBlanks,
   removeGame,
   removeRound,
   endRound,
-  setRoundBlanks,
   onLog,
   onRequestWin,
   onRecap,
@@ -90,7 +88,6 @@ export function CalendarView({
   // Where a backdated game goes: a single game (default), an existing
   // round on that day, or a brand-new round. Never assigned silently.
   const [target, setTarget] = useState<string>("single");
-  const [newRoundBlanks, setNewRoundBlanks] = useState(defaultBlanks);
   // After adding to a "New round", keep adding to that same round.
   const [followNew, setFollowNew] = useState(false);
 
@@ -146,13 +143,13 @@ export function CalendarView({
 
   // Older games (before rounds and details existed) vs single games logged since.
   const legacy = day.unassigned.filter((g) => !detailsRecorded(g));
-  const singles = day.unassigned.filter((g) => detailsRecorded(g));
+  const singles = day.unassigned.filter((g) => detailsRecorded(g) && !g.tournament);
+  const tourney = day.unassigned.filter((g) => g.tournament);
   const roomyRounds = day.rounds.filter((r) => r.games.length < GAMES_PER_ROUND);
 
   useEffect(() => {
-    if (target !== "single" && target !== "new" && !roomyRounds.some((r) => r.round.id === target)) setTarget("single");
+    if (!["single", "tournament", "new"].includes(target) && !roomyRounds.some((r) => r.round.id === target)) setTarget("single");
   }, [roomyRounds, target]);
-  useEffect(() => setNewRoundBlanks(defaultBlanks), [defaultBlanks]);
   const newestRoundId = day.rounds[day.rounds.length - 1]?.round.id;
   useEffect(() => {
     if (!followNew || !newestRoundId) return;
@@ -177,8 +174,11 @@ export function CalendarView({
     if (target === "single") {
       return { opts: { at, single: true, blanks: singleBlanks }, label: `Single game · ${singleBlanks ? "Blanks" : "No blanks"}` };
     }
+    if (target === "tournament") {
+      return { opts: { at, tournament: true }, label: "Tournament game" };
+    }
     if (target === "new") {
-      return { opts: { at, newRound: true, newRoundBlanks }, label: `Starts Round ${day.rounds.length + 1}` };
+      return { opts: { at, newRound: true }, label: `Starts Round ${day.rounds.length + 1}` };
     }
     const rv = day.rounds.find((r) => r.round.id === target)!;
     return { opts: { at, roundId: target }, label: `Round ${rv.number} · Game ${rv.games.length + 1} of ${GAMES_PER_ROUND}` };
@@ -186,8 +186,9 @@ export function CalendarView({
 
   const targetOptions = [
     { value: "single", label: "Single game" },
+    { value: "tournament", label: "Tournament game" },
     ...roomyRounds.map((r) => ({ value: r.round.id, label: `Round ${r.number} (${r.games.length}/${GAMES_PER_ROUND})` })),
-    { value: "new", label: "New round" },
+    { value: "new", label: "New scramble round" },
   ];
 
   return (
@@ -364,13 +365,6 @@ export function CalendarView({
                       <RoundSlots games={rv.games} size="sm" />
                       {day.rounds.length > 1 && <span className="ml-auto text-maroon-900/60">{open ? "▴" : "▾"}</span>}
                     </button>
-                    <Segmented
-                      size="sm"
-                      label={`Round ${rv.number} blanks`}
-                      value={rv.round.blanks}
-                      onChange={(b) => setRoundBlanks(rv.round.id, b)}
-                      options={BLANKS_OPTIONS}
-                    />
                   </div>
                   <AnimatePresence initial={false}>
                     {open && (
@@ -421,7 +415,20 @@ export function CalendarView({
           </div>
         )}
 
-        {legacy.length > 0 && (
+        {tourney.length > 0 && (
+          <div className="mt-4">
+            <p className="mb-2 card-title">
+              Tournament games · {tourney.length} · {tourney.reduce((n, g) => n + gamePoints(g), 0)} pts
+            </p>
+            <ul className="space-y-1.5">
+              {tourney.map((g) => (
+                <GameRow key={g.id ?? g.won_at} game={g} onRemove={removeGame} />
+              ))}
+            </ul>
+          </div>
+        )}
+
+                {legacy.length > 0 && (
           <div className="mt-4">
             <p className="card-title">Games · {legacy.length}</p>
             <p className="mb-2 mt-0.5 text-[11px] text-maroon-900/70">
@@ -483,22 +490,14 @@ export function CalendarView({
               ))}
             </select>
 
-            {(target === "single" || target === "new") && (
+            {target === "single" && (
               <div className="mt-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-maroon-900/80">
-                  {target === "single" ? "This game" : "The new round"}
-                </span>
-                <Segmented
-                  size="sm"
-                  label="Blanks"
-                  value={target === "single" ? singleBlanks : newRoundBlanks}
-                  onChange={target === "single" ? onSingleBlanks : setNewRoundBlanks}
-                  options={BLANKS_OPTIONS}
-                />
+                <span className="text-xs font-semibold text-maroon-900/80">This game</span>
+                <Segmented size="sm" label="Blanks" value={singleBlanks} onChange={onSingleBlanks} options={BLANKS_OPTIONS} />
               </div>
             )}
 
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-[1fr_auto_auto]">
+            <div className={`mt-3 grid gap-2 ${target === "tournament" ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-[1fr_auto_auto]"}`}>
               <select
                 value=""
                 onChange={(e) => {
@@ -509,7 +508,7 @@ export function CalendarView({
                   if (target === "new") setFollowNew(true);
                 }}
                 aria-label="Add a winning hand to this day"
-                className="col-span-2 min-h-10 w-full min-w-0 rounded-lg border border-maroon-900/20 bg-white px-2 text-sm text-maroon-900 outline-none focus:border-maroon-500 sm:col-span-1"
+                className={`min-h-10 w-full min-w-0 rounded-lg border border-maroon-900/20 bg-white px-2 text-sm text-maroon-900 outline-none focus:border-maroon-500 ${target === "tournament" ? "col-span-3" : "col-span-2 sm:col-span-1"}`}
               >
                 <option value="">🏆 Add a win…</option>
                 {SECTIONS.map((s) => (
@@ -522,18 +521,22 @@ export function CalendarView({
                   </optgroup>
                 ))}
               </select>
-              {(["loss", "wall"] as const).map((kind) => (
-                <button
-                  key={kind}
-                  onClick={() => {
-                    onLog(kind, logOpts().opts);
-                    if (target === "new") setFollowNew(true);
-                  }}
-                  className={`min-h-10 rounded-lg px-3 text-sm font-semibold ring-1 ${OUTCOME_META[kind].soft} ${OUTCOME_META[kind].ink} ${OUTCOME_META[kind].ring}`}
-                >
-                  + {kind === "loss" ? "Loss" : "Wall"}
-                </button>
-              ))}
+              {(target === "tournament" ? (["loss", "threw", "wall"] as const) : (["loss", "wall"] as const)).map((kind) => {
+                const look = OUTCOME_META[kind === "threw" ? "loss" : kind];
+                return (
+                  <button
+                    key={kind}
+                    onClick={() => {
+                      const { opts } = logOpts();
+                      onLog(kind === "wall" ? "wall" : "loss", kind === "threw" ? { ...opts, discardedWinner: true } : opts);
+                      if (target === "new") setFollowNew(true);
+                    }}
+                    className={`min-h-10 rounded-lg px-3 text-sm font-semibold ring-1 ${look.soft} ${look.ink} ${look.ring}`}
+                  >
+                    {kind === "loss" ? "+ Loss" : kind === "wall" ? "+ Wall" : `+ Threw it −${DISCARD_PENALTY}`}
+                  </button>
+                );
+              })}
             </div>
             <p className="mt-2 text-[11px] text-maroon-900/70">
               Games added here only join a round if you pick one above.

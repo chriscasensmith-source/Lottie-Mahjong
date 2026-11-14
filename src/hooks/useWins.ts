@@ -18,7 +18,7 @@ const LEGACY_RECORDS_KEY = "mahjong_win_records"; // wins-only records
 const LEGACY_COUNTS_KEY = "mahjong_wins"; // oldest { handId: count } format
 
 const GAME_COLUMNS =
-  "id, hand_id, won_at, outcome, round_id, jokerless, self_drawn, blanks, details_recorded, card_year";
+  "id, hand_id, won_at, outcome, round_id, jokerless, self_drawn, blanks, details_recorded, card_year, tournament, discarded_winner";
 const ROUND_COLUMNS = "id, started_at, blanks, closed_at";
 
 const WRITE_TIMEOUT_MS = 8000;
@@ -138,9 +138,10 @@ export interface LogOptions {
   selfDrawn?: boolean;
   single?: boolean; // log as a single game (no round)
   blanks?: boolean; // blanks setting for a single game
+  tournament?: boolean; // a tournament game (single game, tournament scoring)
+  discardedWinner?: boolean; // tournament loss: she discarded the winning tile
   roundId?: string; // add to this specific round (calendar)
   newRound?: boolean; // always start a fresh round with this game
-  newRoundBlanks?: boolean; // blanks setting if this game starts a new round
 }
 
 export interface UseWins {
@@ -160,12 +161,9 @@ export interface UseWins {
   currentRound: RoundView | null;
   /** The number the next round today will have. */
   nextRoundNumber: number;
-  /** Blanks setting a new round will start with. */
-  defaultBlanks: boolean;
   logWin: (handId: string, opts?: LogOptions) => GameRecord | null;
   logLoss: (opts?: LogOptions) => GameRecord | null;
   logWall: (opts?: LogOptions) => GameRecord | null;
-  setRoundBlanks: (roundId: string, blanks: boolean) => void;
   endRound: (roundId: string) => void;
   removeRound: (roundId: string) => void;
   setGameBlanks: (record: GameRecord, blanks: boolean) => void;
@@ -348,13 +346,9 @@ export function useWins(): UseWins {
 
   // ---- rounds -----------------------------------------------------------------
 
-  const lastBlanks = () => {
-    const latest = [...roundsRef.current].sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0];
-    return latest?.blanks ?? false;
-  };
-
-  const createRound = (at: Date, blanks: boolean): Round => {
-    const round: Round = { id: newId(), started_at: at.toISOString(), blanks, closed_at: null };
+  // Scramble rounds are never played with blanks.
+  const createRound = (at: Date): Round => {
+    const round: Round = { id: newId(), started_at: at.toISOString(), blanks: false, closed_at: null };
     commitRounds([...roundsRef.current, round]);
     enqueue({
       label: "Couldn't start a round",
@@ -384,11 +378,6 @@ export function useWins(): UseWins {
       });
     },
     [commitRounds, enqueue],
-  );
-
-  const setRoundBlanks = useCallback(
-    (roundId: string, blanks: boolean) => patchRound(roundId, { blanks }, "Couldn't update the round"),
-    [patchRound],
   );
 
   // Only empty rounds can be removed (so no games are ever orphaned by accident).
@@ -437,11 +426,11 @@ export function useWins(): UseWins {
           return null;
         }
         round_id = round.id;
-      } else if (!opts.single) {
+      } else if (!opts.single && !opts.tournament) {
         const open = opts.newRound
           ? null
           : openRoundForDay(localDayKey(at), roundsRef.current, recordsRef.current);
-        round_id = open?.round.id ?? createRound(at, opts.newRoundBlanks ?? lastBlanks()).id;
+        round_id = open?.round.id ?? createRound(at).id;
       }
 
       const record: GameRecord = {
@@ -452,9 +441,11 @@ export function useWins(): UseWins {
         round_id,
         jokerless: outcome === "win" ? !!opts.jokerless : false,
         self_drawn: outcome === "win" ? !!opts.selfDrawn : false,
-        blanks: round_id ? false : !!opts.blanks,
+        blanks: round_id || opts.tournament ? false : !!opts.blanks,
         details_recorded: true,
         card_year: CARD_YEAR,
+        tournament: !!opts.tournament,
+        discarded_winner: opts.tournament && outcome === "loss" ? !!opts.discardedWinner : null,
       };
       commitRecords([...recordsRef.current, record]);
       enqueue({
@@ -535,10 +526,6 @@ export function useWins(): UseWins {
   const todayRound = today.rounds[today.rounds.length - 1] ?? null;
   const currentRound = todayRound && todayRound.status === "open" ? todayRound : null;
   const nextRoundNumber = currentRound ? currentRound.number : today.rounds.length + 1;
-  const defaultBlanks = useMemo(() => {
-    const latest = [...rounds].sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0];
-    return latest?.blanks ?? false;
-  }, [rounds]);
 
   const saveState: SaveState = saveError && pending > 0 ? "error" : pending > 0 ? "saving" : "saved";
 
@@ -556,11 +543,9 @@ export function useWins(): UseWins {
     todayRound,
     currentRound,
     nextRoundNumber,
-    defaultBlanks,
     logWin,
     logLoss,
     logWall,
-    setRoundBlanks,
     endRound,
     removeRound,
     setGameBlanks,
