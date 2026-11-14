@@ -296,7 +296,7 @@ export function useWins(): UseWins {
 
     if (!result) {
       setStatus("error");
-      setErrorMsg("The journal didn't answer in time. It may be waking up.");
+      setErrorMsg("Your diary didn't answer in time. It may be waking up.");
       setLoading(false);
       return;
     }

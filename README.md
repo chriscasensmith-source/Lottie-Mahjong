@@ -1,6 +1,6 @@
-# 🀄 The Mahj Journal
+# 🀄 My Mahj Diary
 
-A journal for your American Mahjong (NMJL) games: the full card with
+A diary for your American Mahjong (NMJL) games: the full card with
 color-coded hands, point values, and instructions; **rounds of 4 games**
 (with a blanks / no blanks setting); wins logged with **jokers / no jokers**
 and **self-drawn**, plus losses and wall games; a calendar of the days you

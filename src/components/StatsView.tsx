@@ -256,7 +256,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
 
   function exportCsv() {
     const stamp = new Date().toISOString().slice(0, 10);
-    downloadCsv(`mahj-journal-games-${stamp}.csv`, gamesToCsv(records, rounds));
+    downloadCsv(`my-mahj-diary-games-${stamp}.csv`, gamesToCsv(records, rounds));
   }
 
   return (
@@ -454,7 +454,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
             </ol>
           )}
           <p className="mt-3 text-[11px] text-maroon-900/70">
-            Counts only. The journal doesn&apos;t track which hand you were going for, so there&apos;s no success rate per hand.
+            Counts only. The diary doesn&apos;t track which hand you were going for, so there&apos;s no success rate per hand.
           </p>
         </Card>
 
@@ -564,7 +564,7 @@ export function StatsView({ records, rounds, removeGame }: StatsViewProps) {
         </Card>
 
         {/* Card-year recap */}
-        <Card title={`Your ${CARD_YEAR} Mahj Journal`} subtitle={`Everything played with the ${CARD_YEAR} NMJL card`} className="lg:col-span-2">
+        <Card title={`Your ${CARD_YEAR} Mahj Diary`} subtitle={`Everything played with the ${CARD_YEAR} NMJL card`} className="lg:col-span-2">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {[
               { label: "Games", value: fmtNum(s.cardO.total) },

@@ -100,7 +100,7 @@ export default function Home() {
   if (!auth.ready) {
     return (
       <main className="paper-texture flex min-h-dvh items-center justify-center font-display text-maroon-900/70">
-        Opening your journal…
+        Opening your diary…
       </main>
     );
   }
@@ -415,7 +415,7 @@ function Journal({ email, onSignOut }: { email?: string; onSignOut?: () => Promi
             🀄 {CARD_YEAR} NMJL card
           </p>
           <h1 className="font-display text-[1.75rem] font-bold leading-tight tracking-tight sm:text-4xl">
-            The Mahj Journal
+            My Mahj Diary
           </h1>
           <p className="text-xs text-cream-100/85 sm:text-sm">Your hands, rounds &amp; wins.</p>
 
@@ -485,7 +485,7 @@ function Journal({ email, onSignOut }: { email?: string; onSignOut?: () => Promi
               exit={{ opacity: 0, y: -8 }}
               className="mx-auto mt-2 max-w-2xl rounded-2xl bg-outcome-wall-soft p-4 text-center ring-1 ring-outcome-wall/40"
             >
-              <p className="font-semibold text-outcome-wall-ink">Couldn&apos;t open your journal right now. Your games are safe.</p>
+              <p className="font-semibold text-outcome-wall-ink">Couldn&apos;t open your diary right now. Your games are safe.</p>
               <p className="mt-1 text-sm text-outcome-wall-ink">This is just a connection problem. Try again in a moment.</p>
               <button
                 onClick={() => void reload()}
@@ -499,10 +499,10 @@ function Journal({ email, onSignOut }: { email?: string; onSignOut?: () => Promi
 
         {/* Body */}
         {loading ? (
-          <div className="mt-20 text-center font-display text-maroon-900/70">Opening your journal…</div>
+          <div className="mt-20 text-center font-display text-maroon-900/70">Opening your diary…</div>
         ) : noData && view !== "hands" ? (
           <p className="mt-10 text-center text-sm text-maroon-900/75">
-            Your {view === "stats" ? "stats" : "calendar"} will appear as soon as the journal opens.
+            Your {view === "stats" ? "stats" : "calendar"} will appear as soon as your diary opens.
           </p>
         ) : view === "stats" ? (
           <StatsView records={records} rounds={rounds} removeGame={askDelete} />
@@ -652,14 +652,14 @@ function Journal({ email, onSignOut }: { email?: string; onSignOut?: () => Promi
               </button>
             </p>
           )}
-          The Mahj Journal · {CARD_YEAR} National Mah Jongg League card · {ALL_HANDS.length} hands 🀄
+          My Mahj Diary · {CARD_YEAR} National Mah Jongg League card · {ALL_HANDS.length} hands 🀄
         </footer>
         <ConfirmDialog
           open={confirmSignOut}
           title="Sign out?"
           body={
             <p>
-              Your games stay safe in your journal. You&apos;ll need a new code from your email to sign back in on this
+              Your games stay safe in your diary. You&apos;ll need a new code from your email to sign back in on this
               device.
             </p>
           }

@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "The Mahj Journal",
+  title: "My Mahj Diary",
   description:
-    "A journal for your American Mahjong games — hands, rounds, wins, and stats.",
+    "A diary for your American Mahjong games — hands, rounds, wins, and stats.",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: "Mahj Journal",
+    title: "My Mahj Diary",
     statusBarStyle: "default",
   },
 };
